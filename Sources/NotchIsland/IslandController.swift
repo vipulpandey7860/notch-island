@@ -3,7 +3,7 @@ import AppKit
 // MARK: - IslandController
 
 final class IslandController: NSObject {
-    enum Mode { case idle, music, peek, charging, meeting, expanded }
+    enum Mode { case idle, music, focus, download, peek, charging, meeting, expanded }
     static let win = NSSize(width: 760, height: 330)
 
     let notchW: CGFloat, notchH: CGFloat
@@ -12,20 +12,32 @@ final class IslandController: NSObject {
     let bg = CAShapeLayer(), glow = CAGradientLayer(), glowMask = CAShapeLayer()
     var expanded: ExpandedView!
     let nowPlaying = NowPlaying(), meetings = Meetings(), net = NetSpeed()
+    let downloads = Downloads(), focus = FocusTimer()
     let mascot = Mascot()
     var power = readPower()
     var files: [URL] = []
     var mode = Mode.idle
     var collapsedViews: [NSView] = [], liveArt: [NSImageView] = []
+    var focusEar: NSTextField?                               // the countdown beside the notch
+    var downloadEar: (ring: RingView, percent: NSTextField)?
     var revert, expandWork, collapseWork, poll: Task<Void, Never>?
     var dragChange = 0, fileDrag = false, gen = 0
     var flashedMeeting: String?
     var frozen = false  // snapshot mode: ignore the mouse
     var shelfShown = false
+    var focusItem: NSMenuItem!
+    var settingsWindow: SettingsWindow?
     var wantsShelf: Bool { fileDrag || expanded.dragging || !files.isEmpty }
     var playing: Bool { nowPlaying.track?.playing ?? false }
-    /// What the island shows at rest: ears while music plays or files are held, otherwise hidden in the notch.
-    var base: Mode { playing || !files.isEmpty ? .music : .idle }
+    /// What the island shows at rest: the focus countdown, download progress, ears while music plays or
+    /// files are held, otherwise nothing (hidden in the notch).
+    var base: Mode {
+        if focus.running { return .focus }
+        if downloads.count > 0 { return .download }
+        return playing || !files.isEmpty ? .music : .idle
+    }
+    /// The collapsed states the island rests in, as opposed to brief heads-ups.
+    func resting(_ m: Mode) -> Bool { [.idle, .music, .focus, .download].contains(m) }
 
     var cx: CGFloat { Self.win.width / 2 }
     var top: CGFloat { Self.win.height }
@@ -45,6 +57,7 @@ final class IslandController: NSObject {
         panel = IslandPanel(NSRect(x: f.midX - Self.win.width / 2, y: f.maxY - Self.win.height,
                                   width: Self.win.width, height: Self.win.height))
         super.init()
+        Pref.registerDefaults()
 
         panel.contentView = root
         root.wantsLayer = true
@@ -56,11 +69,10 @@ final class IslandController: NSObject {
         root.layer!.insertSublayer(glow, at: 0)
         root.layer!.insertSublayer(bg, at: 0)
         // The robot sits under the island's layers, so a growing island simply covers it
-        UserDefaults.standard.register(defaults: ["showMascot": true])
         mascot.topY = top
         mascot.world = restingRect(.idle)
         mascot.mouse = { [unowned self] in self.panel.mouseLocationOutsideOfEventStream }
-        mascot.container.isHidden = !UserDefaults.standard.bool(forKey: "showMascot")
+        mascot.container.isHidden = !Pref.showMascot.isOn
         root.layer!.insertSublayer(mascot.container, at: 0)
 
         expanded = ExpandedView(frame: expandedFrame, c: self)
@@ -68,25 +80,37 @@ final class IslandController: NSObject {
         expanded.rider.isHidden = mascot.container.isHidden
         root.addSubview(expanded)
         root.onDrag = { [unowned self] in self.expanded.setDragging($0); self.refreshShelf() }
-        root.onDrop = { [unowned self] in
+        root.onDrop = { [unowned self] urls, point in
             self.fileDrag = false  // the drop's mouse-up lands in our window, so the global monitor never sees it
             self.mascot.setWatching(false)
-            self.addFiles($0)
+            if self.expanded.isOverAirDrop(point) { ShelfAction.airDrop(urls) } else { self.addFiles(urls) }
         }
+
+        // Right-click the open island
+        // TODO: a way to reach this menu while the island is collapsed
         let menu = NSMenu()
-        // TODO: add "Open at Login" (SMAppService.mainApp) and a way to reach this menu while collapsed
-        let robot = menu.addItem(withTitle: "Show Mascot", action: #selector(toggleMascot(_:)), keyEquivalent: "")
-        robot.target = self
-        robot.state = mascot.container.isHidden ? .off : .on
+        focusItem = menu.addItem(withTitle: "Start Focus Timer", action: #selector(toggleFocus), keyEquivalent: "")
+        focusItem.target = self
+        menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Notch Island", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
-        root.menu = menu  // right-click the open island
+        root.menu = menu
 
         nowPlaying.onChange = { [unowned self] in self.trackChanged($0) }
         meetings.onChange = { [unowned self] in self.showMeeting() }
+        focus.onChange = { [unowned self] in self.focusChanged() }
+        downloads.onChange = { [unowned self] in
+            self.updateMascotMood()
+            self.refreshResting()
+        }
+        downloads.onFinished = { [unowned self] url in
+            self.addFiles([url])
+            self.mascot.cheer()
+        }
         expanded.show(nil)
         expanded.showPower(power)
         expanded.showShelf(files)
+        expanded.showFocus(focus)
         showMeeting()
         tintGlow()
         panel.orderFrontRegardless()
@@ -104,22 +128,49 @@ final class IslandController: NSObject {
         }
         nowPlaying.start()
         meetings.start()
+        downloads.start()
         mascot.start()
         updateMascotMood()
     }
 
     func updateMascotMood() {
-        let mood: Mascot.Mood = playing ? .party : files.isEmpty ? .asleep : .calm
+        let mood: Mascot.Mood
+        if focus.phase == .focus { mood = .work }
+        else if playing { mood = .party }
+        else if files.isEmpty && downloads.count == 0 && !focus.running { mood = .asleep }
+        else { mood = .calm }
         mascot.setMood(mood, accent: nowPlaying.track?.accent ?? .white)
     }
 
-    @objc func toggleMascot(_ item: NSMenuItem) {
-        let on = item.state != .on
-        item.state = on ? .on : .off
-        UserDefaults.standard.set(on, forKey: "showMascot")
-        mascot.setVisible(on)
-        expanded.rider.isHidden = !on
-        if on, mode == .expanded { mascot.pause() }  // it's riding the bar right now
+    // MARK: Menu and settings
+
+    @objc func toggleFocus() {
+        if focus.running { focus.stop() } else { focus.start() }
+    }
+
+    func focusChanged() {
+        focusItem.title = focus.running ? "Stop Focus Timer" : "Start Focus Timer"
+        expanded.showFocus(focus)
+        updateMascotMood()
+        if resting(mode) { setMode(base, force: true) }  // new phase: new ear colours, or the timer's gone
+    }
+
+    @objc func openSettings() {
+        if settingsWindow == nil { settingsWindow = SettingsWindow { [unowned self] in self.apply($0) } }
+        NSApp.activate()
+        settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    func apply(_ p: Pref) {
+        switch p {
+        case .showMascot:
+            mascot.setVisible(p.isOn)
+            expanded.rider.isHidden = !p.isOn
+            if p.isOn, mode == .expanded { mascot.pause() }  // it's riding the bar right now
+        case .showMeetings: showMeeting()
+        case .showNetSpeed: expanded.showFocus(focus)
+        case .clearShelfAfterDrag: break  // read when a drag out ends
+        }
     }
 
     // MARK: Geometry
@@ -128,6 +179,8 @@ final class IslandController: NSObject {
         switch m {
         case .idle: return (notchW - 8, notchH - 4, 8, 0)  // tucked behind the hardware notch
         case .music: return (notchW + 2 * (playing && !files.isEmpty ? 64 : 40), notchH, 10, 6)
+        case .focus: return (notchW + 2 * 80, notchH, 10, 6)
+        case .download: return (notchW + 2 * 56, notchH, 10, 6)
         case .charging: return (notchW + 2 * 104, notchH, 10, 6)
         case .meeting: return (notchW + 2 * 110, notchH, 10, 6)
         case .peek: return (notchW + 2 * 100, notchH + 52, 22, 8)
@@ -146,7 +199,7 @@ final class IslandController: NSObject {
 
     /// What the robot walks around at rest: the island with its ears, or the bare hardware notch.
     func restingRect(_ m: Mode) -> CGRect {
-        m == .music ? rect(.music) : CGRect(x: cx - notchW / 2, y: top - notchH, width: notchW, height: notchH)
+        m == .idle ? CGRect(x: cx - notchW / 2, y: top - notchH, width: notchW, height: notchH) : rect(m)
     }
 
     /// Morph the island to `m`'s shape: bounce when growing, settle without overshoot when shrinking.
@@ -161,7 +214,7 @@ final class IslandController: NSObject {
         guard m != mode || force else { return }
         let was = mode, s0 = spec(was), s1 = spec(m)
         mode = m
-        if m == .idle || m == .music { mascot.setWorld(restingRect(m)) }
+        if resting(m) { mascot.setWorld(restingRect(m)) }
         let open = m == .expanded
         reshape(to: m, growing: s1.w * s1.h > s0.w * s0.h)
         animate(bg, "shadowOpacity", to: Float(open ? 0.6 : 0), spring: false)
@@ -171,7 +224,7 @@ final class IslandController: NSObject {
             fade(v, to: 0, duration: 0.1)
             after(0.15) { v.removeFromSuperview() }
         }
-        liveArt = []
+        liveArt = []; focusEar = nil; downloadEar = nil
         collapsedViews = collapsedContent(m)
         for v in collapsedViews {
             v.alphaValue = 0
@@ -224,6 +277,23 @@ final class IslandController: NSObject {
             tray.contentTintColor = white(0.85)
             tray.frame = NSRect(x: r.minX + 11, y: cy - 8, width: 20, height: 16)
             return [tray, pill("\(files.count)", NSRect(x: r.maxX - 33, y: cy - 8, width: 22, height: 16))]
+        case .focus:
+            let rest = focus.phase == .rest, tint: NSColor = rest ? .systemGreen : .systemOrange
+            let icon = NSImageView(image: sym(rest ? "cup.and.saucer.fill" : "timer", 11))
+            icon.contentTintColor = tint
+            icon.frame = NSRect(x: r.minX + 12, y: cy - 7, width: 15, height: 14)
+            let name = label(rest ? "Break" : "Focus", 12, .semibold); put(name, r.minX + 31, cy, 44)
+            let countdown = label(fmt(focus.remaining), 12, .semibold, tint, mono: true)
+            put(countdown, r.maxX - 66, cy, 52, align: .right)
+            focusEar = countdown
+            return [icon, name, countdown]
+        case .download:
+            let ring = RingView(frame: NSRect(x: r.minX + 12, y: cy - 9, width: 18, height: 18), symbol: "arrow.down", color: .systemBlue)
+            let percent = label("", 12, .semibold, white(0.9), mono: true)
+            put(percent, r.maxX - 56, cy, 44, align: .right)
+            downloadEar = (ring, percent)
+            updateEars()
+            return [ring, percent]
         case .charging:
             let bolt = NSImageView(image: sym("bolt.fill", 11))
             bolt.contentTintColor = .systemGreen
@@ -254,6 +324,20 @@ final class IslandController: NSObject {
         }
     }
 
+    /// The timer or downloads changed: switch resting state, or just update the ears in place.
+    func refreshResting() {
+        guard resting(mode) else { return }
+        if mode != base { setMode(base) } else { updateEars() }
+    }
+
+    func updateEars() {
+        focusEar?.stringValue = fmt(focus.remaining)
+        if let ear = downloadEar {
+            ear.ring.fraction = CGFloat(downloads.fraction)
+            ear.percent.stringValue = "\(Int(downloads.fraction * 100))%"
+        }
+    }
+
     /// Shows a collapsed state for a few seconds, then falls back to `base`.
     func flash(_ m: Mode, _ seconds: Double) {
         guard mode != .expanded else { return }
@@ -281,6 +365,7 @@ final class IslandController: NSObject {
             // a new drag that carries files (not a window or text drag)
             fileDrag = pb.changeCount != dragChange && pb.types?.contains(.fileURL) == true
         case .leftMouseUp: fileDrag = false
+        case .mouseMoved: mascot.cursor(at: panel.convertPoint(fromScreen: NSEvent.mouseLocation))
         default: break
         }
         mascot.setWatching(fileDrag)
@@ -330,7 +415,7 @@ final class IslandController: NSObject {
         collapseWork = nil
         poll?.cancel(); poll = nil
         panel.ignoresMouseEvents = true
-        expanded.setDragging(false)
+        expanded.setDragging(nil)
         setMode(base)
     }
 
@@ -355,7 +440,7 @@ final class IslandController: NSObject {
         }
         guard mode != .expanded else { return }
         if isNew, t?.playing == true { flash(.peek, 3) }
-        else if mode == .idle || mode == .music { setMode(base) }
+        else if resting(mode) { setMode(base) }
     }
 
     func tick(_ n: Int) {
@@ -363,13 +448,20 @@ final class IslandController: NSObject {
         let s = net.sample()
         expanded.net.stringValue = "↓\(rate(s.down))  ↑\(rate(s.up))"
 
+        focus.tick()
+        if focus.running {
+            expanded.showFocus(focus)
+            updateEars()
+        }
+
         let p = readPower(), pluggedIn = p.plugged && !power.plugged
         if p != power { power = p; expanded.showPower(p) }
         if pluggedIn { flash(.charging, 3.5); mascot.pluggedIn() }
+        mascot.tired = p.hasBattery && !p.plugged && p.level < 20
 
         if n % 30 == 0 { meetings.refresh() } else { showMeeting() }
         // Heads-up 5 minutes before a meeting, once per event
-        if let e = meetings.next, let id = e.eventIdentifier, id != flashedMeeting,
+        if Pref.showMeetings.isOn, let e = meetings.next, let id = e.eventIdentifier, id != flashedMeeting,
            (1...300).contains(e.startDate.timeIntervalSinceNow) {
             flashedMeeting = id
             flash(.meeting, 8)
@@ -379,7 +471,7 @@ final class IslandController: NSObject {
 
     func showMeeting() {
         guard !frozen else { return }  // snapshot mode stages its own
-        if let e = meetings.next {
+        if Pref.showMeetings.isOn, let e = meetings.next {
             // Joinable from 10 minutes before until it ends
             let joinable = e.startDate.timeIntervalSinceNow < 600 && e.endDate > Date()
             expanded.showMeeting("\(e.title ?? "Event") · \(when(e.startDate))", color: e.calendar.color,
@@ -397,6 +489,7 @@ final class IslandController: NSObject {
         expanded.showShelf(files)
         refreshShelf()
         updateMascotMood()
+        if resting(mode) { setMode(base, force: true) }  // show the count
     }
 
     func removeFiles(_ urls: [URL]) {
@@ -404,7 +497,7 @@ final class IslandController: NSObject {
         expanded.showShelf(files)
         refreshShelf()
         updateMascotMood()
-        if mode == .music || mode == .idle { setMode(base, force: true) }  // refresh the count, or tuck away
+        if resting(mode) { setMode(base, force: true) }  // refresh the count, or tuck away
     }
 
     // MARK: Snapshot (dev check)

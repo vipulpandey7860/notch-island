@@ -28,7 +28,13 @@ final class ExpandedView: FlippedView {
     let dragAll = DragOutView(frame: NSRect(x: 538, y: 7, width: 78, height: 22))
     let grid = FlippedView(frame: NSRect(x: 24, y: 36, width: 592, height: 62))
     let drop = DropZoneView(frame: NSRect(x: 24, y: 36, width: 592, height: 62))
+    // While a drag is on, the drop area splits: hold on the shelf, or send straight via AirDrop
+    let airDrop = DropZoneView(frame: NSRect(x: 472, y: 36, width: 144, height: 62), symbol: "dot.radiowaves.left.and.right",
+                               idle: "AirDrop", ready: "Send via AirDrop")
+    let focusPill = PillButton("25:00", symbol: "timer", color: .systemOrange, width: 74)
+    private var more: IconButton!
     private var play: IconButton!
+    private var swipe: CGFloat = 0, swiped = false
     private var shownArt: NSImage?, shownPlaying: Bool?
     private(set) var dragging = false
     private unowned let c: IslandController
@@ -48,6 +54,11 @@ final class ExpandedView: FlippedView {
         put(pct, w - 58, 16, 34, align: .right)
         batt.contentTintColor = white(0.65); batt.frame = NSRect(x: w - 88, y: 8, width: 28, height: 16)
         put(net, w - 248, 16, 150, align: .right)
+        // The focus countdown takes the network speed's place while it runs; click to stop
+        focusPill.frame.origin = NSPoint(x: w - 88 - 8 - focusPill.frame.width, y: 6)
+        focusPill.isHidden = true
+        focusPill.toolTip = "Stop the focus timer"
+        focusPill.action = { c.focus.stop() }
 
         // Now playing: art left, controls on the title row with the player app under them,
         // progress underneath (kept clear above for the robot)
@@ -75,10 +86,15 @@ final class ExpandedView: FlippedView {
         dragAll.toolTip = "Drag every file out at once"
         dragAll.setAccessibilityLabel("Drag all files")
         dragAll.onGone = { c.removeFiles($0) }
-        ([divider, shelfTitle, dragAll, grid, drop] as [NSView]).forEach(shelfRow.addSubview)
+        more = IconButton("ellipsis.circle", size: 22, point: 14, label: "Shelf actions") { [unowned self] in
+            _ = self.fileMenu(c.files, from: self.more).popUp(positioning: nil, at: NSPoint(x: 0, y: -4), in: self.more)
+        }
+        more.frame.origin = NSPoint(x: dragAll.frame.minX - 28, y: 7)
+        airDrop.isHidden = true
+        ([divider, shelfTitle, more, dragAll, grid, drop, airDrop] as [NSView]).forEach(shelfRow.addSubview)
         shelfRow.alphaValue = 0; shelfRow.isHidden = true
 
-        ([cal, meeting, join, pct, batt, net, art, title, artist, bars, source, progress, rider, elapsed, remaining,
+        ([cal, meeting, join, pct, batt, net, focusPill, art, title, artist, bars, source, progress, rider, elapsed, remaining,
           prev, play, next, shelfRow] as [NSView]).forEach(addSubview)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -116,7 +132,7 @@ final class ExpandedView: FlippedView {
     }
 
     func showTime(_ e: Double, _ d: Double) {
-        guard d > 0 else { return }
+        guard d > 0, !progress.scrubbing else { return }
         progress.fraction = CGFloat(e / d)
         elapsed.stringValue = fmt(e); remaining.stringValue = "-" + fmt(d - e)
     }
@@ -146,18 +162,63 @@ final class ExpandedView: FlippedView {
         for (i, url) in files.prefix(7).enumerated() {
             let v = FileItemView(url: url) { [c] in c.removeFiles([url]) }
             v.onGone = { [c] in c.removeFiles($0) }
+            v.onMenu = { [unowned self] view in self.fileMenu([url], from: view) }
             v.frame.origin = NSPoint(x: CGFloat(i) * 76, y: 0)
             grid.addSubview(v)
         }
         shelfTitle.stringValue = files.isEmpty ? "Shelf" : "Shelf · \(files.count)"
         dragAll.files = files; dragAll.isHidden = files.isEmpty
+        more.isHidden = files.isEmpty
         drop.isHidden = !files.isEmpty && !dragging
     }
 
-    func setDragging(_ on: Bool) {
-        dragging = on
-        drop.setActive(on)
-        drop.isHidden = !on && !c.files.isEmpty
+    /// A file drag is over the island at `point` (window coords), or has left (`nil`).
+    func setDragging(_ point: NSPoint?) {
+        dragging = point != nil
+        let toAirDrop = point.map(isOverAirDrop) ?? false
+        airDrop.isHidden = !dragging
+        drop.setFrameSize(NSSize(width: dragging ? airDrop.frame.minX - 8 - drop.frame.minX : 592, height: drop.frame.height))
+        drop.setActive(dragging && !toAirDrop)
+        airDrop.setActive(toAirDrop)
+        drop.isHidden = !dragging && !c.files.isEmpty
+    }
+
+    func isOverAirDrop(_ windowPoint: NSPoint) -> Bool {
+        airDrop.bounds.contains(airDrop.convert(windowPoint, from: nil))
+    }
+
+    /// Things to do with shelf files: a tile's right-click menu, and the "⋯" menu for all of them.
+    func fileMenu(_ urls: [URL], from view: NSView) -> NSMenu {
+        let m = NSMenu(), many = urls.count > 1
+        m.addItem(ActionItem("AirDrop", symbol: "dot.radiowaves.left.and.right") { ShelfAction.airDrop(urls) })
+        m.addItem(ActionItem("Share…", symbol: "square.and.arrow.up") { ShelfAction.share(urls, from: view) })
+        m.addItem(ActionItem(many ? "Compress \(urls.count) Items" : "Compress", symbol: "doc.zipper") { [c] in
+            ShelfAction.compress(urls) { zip in if let zip { c.addFiles([zip]) } }  // the archive joins the shelf
+        })
+        m.addItem(ActionItem(many ? "Copy Paths" : "Copy Path", symbol: "doc.on.doc") { ShelfAction.copyPaths(urls) })
+        m.addItem(ActionItem("Show in Finder", symbol: "folder") { ShelfAction.reveal(urls) })
+        m.addItem(.separator())
+        m.addItem(ActionItem(many ? "Clear Shelf" : "Remove from Shelf", symbol: "xmark.circle") { [c] in c.removeFiles(urls) })
+        return m
+    }
+
+    /// The focus countdown replaces the network speed while the timer runs.
+    func showFocus(_ timer: FocusTimer) {
+        focusPill.isHidden = !timer.running
+        net.isHidden = timer.running || !Pref.showNetSpeed.isOn
+        guard let phase = timer.phase else { return }
+        focusPill.setTitle(fmt(timer.remaining))
+        focusPill.setColor(phase == .focus ? .systemOrange : .systemGreen)
+    }
+
+    /// Two-finger swipe across the open island: left for the next track, right for the previous.
+    override func scrollWheel(with e: NSEvent) {
+        if e.phase == .began { swipe = 0; swiped = false }
+        guard e.momentumPhase.isEmpty, !swiped, abs(e.scrollingDeltaX) > abs(e.scrollingDeltaY) else { return }
+        swipe += e.scrollingDeltaX
+        guard abs(swipe) > 60 else { return }
+        swiped = true
+        if swipe < 0 { c.nowPlaying.next() } else { c.nowPlaying.prev() }
     }
 
     /// Fades the shelf row; the controller grows or shrinks the island to match.

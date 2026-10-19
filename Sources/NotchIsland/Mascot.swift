@@ -2,7 +2,7 @@
 // one living around the notch, and `RiderView` is the one riding the open island's progress bar.
 import AppKit
 
-// MARK: - Sprites: 12×14 pixel frames, each pixel drawn 1.5pt (3 Retina pixels)
+// MARK: - Sprites: 12-pixel-wide frames, each pixel drawn 1.5pt (3 Retina pixels)
 
 private let palette: [Character: NSColor] = [
     "K": NSColor(srgbRed: 0.11, green: 0.12, blue: 0.15, alpha: 1),  // outline
@@ -11,18 +11,28 @@ private let palette: [Character: NSColor] = [
     "D": NSColor(srgbRed: 0.14, green: 0.16, blue: 0.20, alpha: 1),  // face screen
     "E": NSColor(srgbRed: 0.42, green: 0.89, blue: 1.00, alpha: 1),  // eyes
     "C": NSColor(srgbRed: 0.23, green: 0.56, blue: 0.65, alpha: 1),  // closed eyes
+    "R": NSColor(srgbRed: 0.90, green: 0.28, blue: 0.30, alpha: 1),  // Santa hat
+    "O": NSColor(srgbRed: 0.96, green: 0.60, blue: 0.14, alpha: 1),  // pumpkin
 ]  // "A" is the antenna light, coloured at draw time
 
-private let head = [
-    ".....AA.....",
-    ".....KK.....",
-    ".KKKKKKKKKK.",
-    ".KWWWWWWWWK.",
-    ".KWDDDDDDWK.",
-]
+// What it wears on top (3 rows): its antenna, or a seasonal hat whose tip glows like the antenna
+private let antennaTop = ["............", ".....AA.....", ".....KK....."]
+private let pumpkinTop = [".....KA.....", "...OOOOOO...", "..OOOOOOOO.."]
+private let santaTop = ["......RRRA..", "...RRRRRR...", ".WWWWWWWWWW."]
+
+private func headwear() -> (name: String, rows: [String]) {
+    switch Calendar.current.component(.month, from: Date()) {
+    case 10: return ("pumpkin", pumpkinTop)
+    case 12: return ("santa", santaTop)
+    default: return ("antenna", antennaTop)
+    }
+}
+
+private let head = [".KKKKKKKKKK.", ".KWWWWWWWWK.", ".KWDDDDDDWK."]
 private let eyesAhead = [".KWDEDDEDWK.", ".KWDEDDEDWK."]
 private let eyesRight = [".KWDDEDDEWK.", ".KWDDEDDEWK."]
 private let eyesLeft = [".KWEDDEDDWK.", ".KWEDDEDDWK."]
+private let eyesDown = [".KWDDDDDDWK.", ".KWDEDDEDWK."]
 private let eyesShut = [".KWDDDDDDWK.", ".KWDCDDCDWK."]
 private let torso = [
     ".KWWWWWWWWK.",
@@ -34,6 +44,12 @@ private let torso = [
 // Dancing: one arm pumps a pixel higher than the other
 private let torsoArmL = [".KWWWWWWWWK.", ".KKKKKKKKKK.", "..KKGWWGK...", "...KGWWGKK..", "...KKKKKK..."]
 private let torsoArmR = [".KWWWWWWWWK.", ".KKKKKKKKKK.", "...KGWWGKK..", "..KKGWWGK...", "...KKKKKK..."]
+// Waving: its right arm up beside its head
+private let torsoWave = [".KWWWWWWWWKK", ".KKKKKKKKKKK", "...KGWWGK.K.", "..KKGWWGK...", "...KKKKKK..."]
+// Working: standing behind a little desk, hands on it
+private func desk(_ hands: String) -> [String] {
+    [".KWWWWWWWWK.", ".KKKKKKKKKK.", hands, "KKKKKKKKKKKK", "KGGGGGGGGGGK", ".K........K.", ".K........K."]
+}
 private let legsStand = ["....K..K....", "............"]
 private let legsDangle = ["...K....K...", "...K....K..."]  // sitting on an edge
 
@@ -47,13 +63,11 @@ private let sprites: [Robot.Frame: [String]] = [
     .sleep: head + eyesShut + torso + legsDangle,
     .danceA: head + eyesLeft + torsoArmL + ["...K...K....", "............"],
     .danceB: head + eyesRight + torsoArmR + ["....K...K...", "............"],
-    .stretch: [  // arms up, eyes shut: a yawn
-        ".....AA.....",
-        ".....KK.....",
-        "K.KKKKKKKK.K",
-        "KKWWWWWWWWKK",
-        ".KWDDDDDDWK.",
-    ] + eyesShut + [
+    .wave1: head + [".KWDEDDEDWKK", ".KWDEDDEDWKK"] + torsoWave + legsStand,  // hand high
+    .wave2: head + eyesAhead + torsoWave + legsStand,                         // hand lower
+    .work1: head + eyesDown + desk("..KK....KK.."),
+    .work2: head + eyesDown + desk("...KK..KK..."),
+    .stretch: ["K.KKKKKKKK.K", "KKWWWWWWWWKK", ".KWDDDDDDWK."] + eyesShut + [  // arms up, eyes shut: a yawn
         ".KWWWWWWWWK.",
         ".KKKKKKKKKK.",
         "...KGWWGK...",
@@ -83,7 +97,9 @@ private func pixels(_ rows: [String], antenna: NSColor) -> CGImage {
 /// A posable pixel robot. Its layer's origin is at its boots: put that on a surface, and rotate the
 /// layer to stand it on walls and ceilings.
 final class Robot {
-    enum Frame: String { case stand, look, walk1, walk2, blink, sit, sleep, stretch, danceA, danceB }
+    enum Frame: String {
+        case stand, look, walk1, walk2, blink, sit, sleep, stretch, danceA, danceB, wave1, wave2, work1, work2
+    }
     static let px: CGFloat = 1.5
     static let half: CGFloat = 9  // half its width
     static let restingAntenna = NSColor(srgbRed: 1, green: 0.42, blue: 0.5, alpha: 1)
@@ -168,9 +184,9 @@ final class Robot {
 
     func puffZ() {
         let z = CALayer()
-        z.contents = image("z", zzz)
+        z.contents = image("z", zzz, top: [])
         z.magnificationFilter = .nearest
-        z.frame = CGRect(x: 3, y: 17, width: 4 * Self.px, height: 4 * Self.px)
+        z.frame = CGRect(x: 3, y: 19, width: 4 * Self.px, height: 4 * Self.px)
         layer.addSublayer(z)
         let rise = CABasicAnimation(keyPath: "position.y"); rise.byValue = 12
         let fadeOut = CABasicAnimation(keyPath: "opacity"); fadeOut.fromValue = 1; fadeOut.toValue = 0
@@ -190,9 +206,12 @@ final class Robot {
 
     private func draw(_ f: Frame) {
         current = f
-        sprite.contents = image(f)
-        let below: CGFloat = f == .sit || f == .sleep ? 2 : 1  // pixel rows under the surface
-        sprite.frame = CGRect(x: -Self.half, y: -below * Self.px, width: 12 * Self.px, height: 14 * Self.px)
+        let img = image(f)
+        sprite.contents = img
+        // Pixel rows under the surface it stands on: legs dangle when sitting; the desk stands on it
+        let below: CGFloat = [.sit, .sleep].contains(f) ? 2 : [.work1, .work2].contains(f) ? 0 : 1
+        sprite.frame = CGRect(x: -Self.half, y: -below * Self.px,
+                              width: CGFloat(img.width) * Self.px, height: CGFloat(img.height) * Self.px)
         updateBob()
     }
 
@@ -209,11 +228,14 @@ final class Robot {
         }
     }
 
-    private func image(_ f: Frame) -> CGImage { image(f.rawValue, sprites[f]!) }
-    private func image(_ key: String, _ rows: [String]) -> CGImage {
+    private func image(_ f: Frame) -> CGImage {
+        let hat = headwear()
+        return image(f.rawValue + hat.name, sprites[f]!, top: hat.rows)
+    }
+    private func image(_ key: String, _ rows: [String], top: [String]) -> CGImage {
         let k = key + antenna.description
         if let img = cache[k] { return img }
-        let img = pixels(rows, antenna: antenna)
+        let img = pixels(top + rows, antenna: antenna)
         cache[k] = img
         return img
     }
@@ -222,18 +244,19 @@ final class Robot {
 // MARK: - Mascot: the robot living around the notch
 
 /// On magnet boots it walks the menu bar, climbs the notch's walls and hangs underneath; it sits,
-/// dozes, dances to music, and reacts to what Notch Island is doing.
+/// dozes, dances to music, works at a desk during focus time, and reacts to what Notch Island is doing.
 final class Mascot {
     typealias Frame = Robot.Frame
-    /// Nothing going on: it sleeps. Files on the shelf: it potters about. Music: it parties and never sleeps.
-    enum Mood { case asleep, calm, party }
+    /// Nothing going on: it sleeps. Files or downloads: it potters about. Music: it parties and never
+    /// sleeps. Focus timer: it works.
+    enum Mood { case asleep, calm, party, work }
     /// Where its boots are: the menu bar's bottom edge either side, the island's side walls, or its underside.
     enum Surface { case floorL, wallL, ceiling, wallR, floorR }
     struct Spot { var surface: Surface; var pos: CGFloat }  // pos: x on floors/ceiling, y on walls
 
     private let half = Robot.half
     private let reach: CGFloat = 64     // how far it strays along the menu bar
-    private let speed: CGFloat = 16     // points per second
+    private var speed: CGFloat { tired ? 8 : 16 }  // points per second
 
     let robot = Robot()
     var container: CALayer { robot.layer }
@@ -241,11 +264,21 @@ final class Mascot {
     var topY: CGFloat = 0               // the screen's top edge
     var mouse: () -> CGPoint = { .zero }
     var frozen = false                  // snapshot mode: only `place` moves it
+    /// Low battery: slower, sits more, red antenna.
+    var tired = false { didSet { if tired != oldValue { robot.setAntenna(antennaColor) } } }
     private(set) var here = Spot(surface: .floorL, pos: 0)
     private var rot: CGFloat = 0
     private var mood = Mood.calm, watching = false
-    private var accent = Robot.restingAntenna
+    private var musicAccent = Robot.restingAntenna
+    private var lastWave = Date.distantPast
+    private var yawnedOn: Int?          // the day it last did its morning yawn
     private var task: Task<Void, Never>?
+
+    private var antennaColor: NSColor { mood == .party ? musicAccent : tired ? .systemRed : Robot.restingAntenna }
+    private var isNight: Bool {
+        let h = Calendar.current.component(.hour, from: Date())
+        return h >= 22 || h < 6
+    }
 
     // MARK: Events from the island
 
@@ -287,27 +320,31 @@ final class Mascot {
 
     /// `accent` colours its antenna while music plays.
     func setMood(_ m: Mood, accent color: NSColor) {
-        accent = m == .party ? color : Robot.restingAntenna
-        robot.setAntenna(accent)
-        guard m != mood else { return }
-        let woke = mood == .asleep
+        musicAccent = color
+        let old = mood
         mood = m
+        robot.setAntenna(antennaColor)
+        guard m != old else { return }
         robot.bobbing = m == .party
         switch m {
-        case .asleep: run {}                                                   // live() puts it to bed
-        case .party: run { [unowned self] in try await self.hop() }            // a song! hop up
-        case .calm: run { [unowned self] in if woke { try await self.yawn() } }
+        case .asleep, .work: run {}                                       // live() takes it from here
+        case .party: run { [unowned self] in try await self.hop() }       // a song! hop up
+        case .calm:                                                       // waking up, or a focus break: stretch
+            run { [unowned self] in if old == .asleep || old == .work { try await self.yawn() } }
         }
     }
 
     func pluggedIn() {
         run { [unowned self] in
             self.robot.setAntenna(.systemGreen)
-            defer { self.robot.setAntenna(self.accent) }
+            defer { self.robot.setAntenna(self.antennaColor) }
             try await self.hop(times: 2)
             try await self.nap(0.6)
         }
     }
+
+    /// A download finished and landed on the shelf.
+    func cheer() { run { [unowned self] in try await self.hop(times: 2) } }
 
     func meetingSoon() { run { [unowned self] in try await self.yawn() } }
 
@@ -315,6 +352,15 @@ final class Mascot {
         guard on != watching else { return }
         watching = on
         if on { run { [unowned self] in try await self.watch() } }
+    }
+
+    /// The cursor moved (window coords): if it comes close, wave. At most every few seconds.
+    func cursor(at p: CGPoint) {
+        guard !frozen, !container.isHidden, container.opacity > 0, !watching,
+              Date().timeIntervalSince(lastWave) > 8,
+              hypot(p.x - container.position.x, p.y - container.position.y) < 30 else { return }
+        lastWave = Date()
+        run { [unowned self] in try await self.wave(toward: p) }
     }
 
     // MARK: Geometry
@@ -423,7 +469,7 @@ final class Mascot {
         let d = abs(target - here.pos)
         guard d > 0.5 else { return }
         robot.face((target > here.pos ? 1 : -1) * forward(here.surface))
-        robot.walk()
+        robot.walk(period: tired ? 0.5 : 0.32)
         here.pos = target
         move(to: point(here), duration: d / speed, linear: true)
         try await nap(d / speed)
@@ -470,26 +516,41 @@ final class Mascot {
 
     @MainActor private func live() async throws {
         while true {
+            if mood != .asleep, morningYawnDue() { try await yawn() }
             let roll = Double.random(in: 0..<1)
             switch mood {
             case .asleep:
                 try await bed()
+            case .work:
+                try await work()
             case .party:
-                if roll < 0.40 { try await dance(.random(in: 5...10)) }
+                if roll < 0.40 {
+                    if tired && Bool.random() { try await sit(.random(in: 4...8)) } else { try await dance(.random(in: 5...10)) }
+                }
                 else if roll < 0.62 { try await wander() }
                 else if roll < 0.72 { try await climb() }
                 else if roll < 0.82 { try await hang() }
                 else if roll < 0.94 { try await sit(.random(in: 4...8)) }  // bobs along
                 else { try await idle(.random(in: 2...4)) }
             case .calm:
-                if roll < 0.32 { try await wander() }
-                else if roll < 0.47 { try await climb() }
-                else if roll < 0.62 { try await hang() }
-                else if roll < 0.80 { try await sit(.random(in: 6...14)) }
+                let sleepy = tired || isNight  // more sitting and dozing
+                if roll < (sleepy ? 0.15 : 0.32) { try await wander() }
+                else if roll < (sleepy ? 0.22 : 0.47) { try await climb() }
+                else if roll < (sleepy ? 0.30 : 0.62) { try await hang() }
+                else if roll < (sleepy ? 0.60 : 0.80) { try await sit(.random(in: 6...14)) }
                 else if roll < 0.90 { try await doze(.random(in: 15...40)) }
                 else { try await idle(.random(in: 3...7)) }
             }
         }
+    }
+
+    /// One yawn the first time it's up and about between 6 and 10 in the morning.
+    private func morningYawnDue() -> Bool {
+        let cal = Calendar.current, now = Date()
+        let day = cal.ordinality(of: .day, in: .era, for: now)
+        guard (6..<10).contains(cal.component(.hour, from: now)), yawnedOn != day else { return false }
+        yawnedOn = day
+        return true
     }
 
     @MainActor private func idle(_ seconds: Double) async throws {
@@ -544,13 +605,29 @@ final class Mascot {
         }
     }
 
-    /// Nothing going on: tuck in beside the notch and sleep until something happens.
-    @MainActor private func bed() async throws {
+    /// Goes to its spot right beside the notch, facing it.
+    @MainActor private func toSpot() async throws {
         try await toFloor()
         let left = here.surface == .floorL
         try await walk(to: left ? range(.floorL).upperBound - 12 : range(.floorR).lowerBound + 12)
-        robot.face(left ? 1 : -1)  // facing the notch
+        robot.face(left ? 1 : -1)
+    }
+
+    /// Nothing going on: tuck in beside the notch and sleep until something happens.
+    @MainActor private func bed() async throws {
+        try await toSpot()
         try await doze(.greatestFiniteMagnitude)
+    }
+
+    /// Focus time: it types away at a tiny desk beside the notch, pausing now and then to think.
+    @MainActor private func work() async throws {
+        try await toSpot()
+        while true {
+            robot.loop([.work1, .work2], period: 0.42)
+            try await nap(.random(in: 6...12))
+            robot.show(.work1)
+            try await nap(.random(in: 1...2.5))
+        }
     }
 
     /// Sits on the menu bar's edge, legs dangling, blinking now and then.
@@ -593,6 +670,14 @@ final class Mascot {
         try await nap(1.6)
         robot.show(.stand)
         try await nap(0.4)
+    }
+
+    @MainActor private func wave(toward p: CGPoint) async throws {
+        let dx = (p.x - container.position.x) * cos(rot) + (p.y - container.position.y) * sin(rot)
+        robot.face(dx >= 0 ? 1 : -1)
+        robot.loop([.wave1, .wave2], period: 0.36)
+        try await nap(1.6)
+        robot.show(.stand)
     }
 
     /// Turns to follow a file being dragged until the drag ends.

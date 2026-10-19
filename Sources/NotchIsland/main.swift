@@ -26,16 +26,16 @@ if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLi
         controller.addFiles(["/System/Applications/Music.app", "/System/Applications/Calculator.app", "/etc/hosts"].map(URL.init(fileURLWithPath:)))
         try? await Task.sleep(for: .seconds(1))
         controller.snapshot(dir.appendingPathComponent("6-shelf.png"))
-        controller.expanded.setDragging(true)
+        controller.expanded.setDragging(controller.expanded.airDrop.convert(NSPoint(x: 30, y: 30), to: nil))
         try? await Task.sleep(for: .seconds(0.6))
-        controller.snapshot(dir.appendingPathComponent("7-drop.png"))
+        controller.snapshot(dir.appendingPathComponent("7-drop-airdrop.png"))
         controller.expanded.showMeeting("Design review · in 4m", color: .systemPurple,
                                         join: URL(string: "https://meet.google.com/abc-defg-hij"))
         try? await Task.sleep(for: .seconds(0.3))
         controller.snapshot(dir.appendingPathComponent("7b-join.png"))
 
         // The robot in each kind of spot, around the resting island
-        controller.expanded.setDragging(false)
+        controller.expanded.setDragging(nil)
         controller.collapse()
         try? await Task.sleep(for: .seconds(1))
         let m = controller.mascot
@@ -47,12 +47,23 @@ if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLi
             ("12-robot-sleep", .init(surface: .floorR, pos: m.range(.floorR).lowerBound + 8), .stretch),
             ("13-robot-dance-a", .init(surface: .floorL, pos: m.range(.floorL).upperBound - 12), .danceA),
             ("14-robot-dance-b", .init(surface: .floorL, pos: m.range(.floorL).upperBound - 12), .danceB),
+            ("15-robot-wave", .init(surface: .floorL, pos: m.range(.floorL).upperBound - 12), .wave1),
+            ("16-robot-work", .init(surface: .floorL, pos: m.range(.floorL).upperBound - 12), .work1),
         ]
         for (name, spot, frame) in poses {
             m.place(spot, frame)
             try? await Task.sleep(for: .seconds(0.4))
             controller.snapshot(dir.appendingPathComponent("\(name).png"))
         }
+
+        // Resting states: the focus countdown, and download progress
+        controller.focus.start()
+        try? await Task.sleep(for: .seconds(1.2))
+        controller.snapshot(dir.appendingPathComponent("17-focus.png"))
+        controller.focus.stop()
+        controller.setMode(.download, force: true)
+        try? await Task.sleep(for: .seconds(1.2))
+        controller.snapshot(dir.appendingPathComponent("18-download.png"))
         NSApp.terminate(nil)
     }
 }

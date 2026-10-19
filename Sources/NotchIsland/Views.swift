@@ -99,6 +99,25 @@ final class ProgressBar: NSView {
     override func mouseExited(with e: NSEvent) { hovered = false }
     override func mouseDown(with e: NSEvent) { seek(e) }
     override func mouseDragged(with e: NSEvent) { seek(e) }
+
+    /// True while a scroll-scrub is settling; playback updates leave the bar alone meanwhile.
+    private(set) var scrubbing = false
+    private var settle: Task<Void, Never>?
+
+    /// Scroll over the bar (sideways or up/down) to scrub; the seek goes out once scrolling stops.
+    override func scrollWheel(with e: NSEvent) {
+        let d = abs(e.scrollingDeltaX) >= abs(e.scrollingDeltaY) ? e.scrollingDeltaX : -e.scrollingDeltaY
+        guard d != 0 else { return }
+        scrubbing = true
+        fraction = min(max(fraction + d / bounds.width, 0), 1)
+        settle?.cancel()
+        settle = after(0.3) { [weak self] in
+            guard let self else { return }
+            self.scrubbing = false
+            self.onSeek(self.fraction)
+        }
+    }
+
     private func seek(_ e: NSEvent) {
         fraction = min(max(convert(e.locationInWindow, from: nil).x / bounds.width, 0), 1)
         onSeek(fraction)
@@ -140,20 +159,24 @@ final class IconButton: NSView {
 /// A small coloured pill with a symbol and a word, like "Join".
 final class PillButton: NSView {
     var action: () -> Void = {}
+    private let text: NSTextField
 
     init(_ title: String, symbol: String, color: NSColor, width: CGFloat) {
+        text = label(title, 11, .semibold, mono: true)
         super.init(frame: NSRect(x: 0, y: 0, width: width, height: 20))
         wantsLayer = true; layer!.cornerRadius = 10; layer!.backgroundColor = color.cgColor
         let icon = NSImageView(image: sym(symbol, 9))
         icon.contentTintColor = .white
         icon.frame = NSRect(x: 8, y: 4, width: 13, height: 12)
-        let text = label(title, 11, .semibold)
         put(text, 23, 10, width - 29)
         addSubview(icon); addSubview(text)
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self, userInfo: nil))
         setAccessibilityElement(true); setAccessibilityRole(.button); setAccessibilityLabel(title)
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    func setTitle(_ s: String) { text.stringValue = s }
+    func setColor(_ c: NSColor) { layer!.backgroundColor = c.cgColor }
 
     override func hitTest(_ p: NSPoint) -> NSView? { !isHidden && frame.contains(p) ? self : nil }
     override func acceptsFirstMouse(for e: NSEvent?) -> Bool { true }
@@ -196,9 +219,10 @@ class DragOutView: NSView, NSDraggingSource {
     }
     func draggingSession(_ s: NSDraggingSession, endedAt p: NSPoint, operation: NSDragOperation) {
         let sent = files
+        let dropped = !operation.isEmpty && Pref.clearShelfAfterDrag.isOn
         // Finder can finish a move a beat after the drop, so look a moment later
         after(0.4) {
-            let gone = sent.filter { !FileManager.default.fileExists(atPath: $0.path) }
+            let gone = sent.filter { dropped || !FileManager.default.fileExists(atPath: $0.path) }
             if !gone.isEmpty { self.onGone(gone) }
         }
     }
@@ -206,7 +230,10 @@ class DragOutView: NSView, NSDraggingSource {
 
 final class FileItemView: DragOutView {
     override var isFlipped: Bool { true }
+    var onMenu: ((NSView) -> NSMenu)?  // right-click: AirDrop, Share, Compress…
     private let remove: IconButton
+
+    override func menu(for event: NSEvent) -> NSMenu? { onMenu?(self) }
 
     init(url: URL, onRemove: @escaping () -> Void) {
         remove = IconButton("xmark.circle.fill", size: 18, point: 13, label: "Remove \(url.lastPathComponent)", action: onRemove)
@@ -242,41 +269,87 @@ final class FileItemView: DragOutView {
 
 final class DropZoneView: NSView {
     private let border = CAShapeLayer()
-    private let icon = NSImageView(image: sym("tray.and.arrow.down", 20, .medium))
-    private let text = label("Drop files here", 12, .medium)
+    private let icon: NSImageView
+    private let text = label("", 12, .medium)
+    private let idle: String, ready: String
+    private var active = false
 
-    override init(frame: NSRect) {
+    init(frame: NSRect, symbol: String = "tray.and.arrow.down", idle: String = "Drop files here",
+         ready: String = "Release to hold") {
+        icon = NSImageView(image: sym(symbol, 20, .medium))
+        self.idle = idle; self.ready = ready
         super.init(frame: frame)
         wantsLayer = true; layer!.cornerRadius = 14
-        border.path = CGPath(roundedRect: bounds.insetBy(dx: 0.75, dy: 0.75), cornerWidth: 14, cornerHeight: 14, transform: nil)
         border.fillColor = nil; border.lineWidth = 1.5
         layer!.addSublayer(border)
         addSubview(icon); addSubview(text)
-        setActive(false)
+        style()
     }
     required init?(coder: NSCoder) { fatalError() }
 
+    override func setFrameSize(_ size: NSSize) {
+        super.setFrameSize(size)
+        relayout()
+    }
+
+    /// Highlights while a drag is over it (called on every drag move, so it only bounces on the way in).
     func setActive(_ on: Bool) {
+        guard on != active else { return }
+        active = on
+        style()
+        if on && !reduceMotion { icon.addSymbolEffect(.bounce) }
+    }
+
+    private func style() {
         let accent = NSColor.controlAccentColor
-        border.strokeColor = (on ? accent : white(0.18)).cgColor
-        border.lineDashPattern = on ? nil : [5, 4]
-        layer!.backgroundColor = (on ? NSColor.black.blended(withFraction: 0.16, of: accent)! : .black).cgColor
-        icon.contentTintColor = on ? accent : white(0.4)
-        text.textColor = on ? accent : white(0.4)
-        text.stringValue = on ? "Release to hold" : "Drop files here"
-        // icon + text centred as one line
+        border.strokeColor = (active ? accent : white(0.18)).cgColor
+        border.lineDashPattern = active ? nil : [5, 4]
+        layer!.backgroundColor = (active ? NSColor.black.blended(withFraction: 0.16, of: accent)! : .black).cgColor
+        icon.contentTintColor = active ? accent : white(0.4)
+        text.textColor = active ? accent : white(0.4)
+        text.stringValue = active ? ready : idle
+        relayout()
+    }
+
+    /// Icon and text centred as one line.
+    private func relayout() {
+        border.path = CGPath(roundedRect: bounds.insetBy(dx: 0.75, dy: 0.75), cornerWidth: 14, cornerHeight: 14, transform: nil)
         let tw = ceil(text.fittingSize.width), x = ((bounds.width - 30 - tw) / 2).rounded()
         icon.frame = NSRect(x: x, y: bounds.midY - 13, width: 24, height: 26)
         put(text, x + 30, bounds.midY, tw)
-        if on && !reduceMotion { icon.addSymbolEffect(.bounce) }
     }
+}
+
+/// A progress ring with a symbol in the middle.
+final class RingView: NSView {
+    private let bar = CAShapeLayer()
+    var fraction: CGFloat = 0 { didSet { bar.strokeEnd = min(max(fraction, 0), 1) } }
+
+    init(frame: NSRect, symbol: String, color: NSColor) {
+        super.init(frame: frame)
+        wantsLayer = true
+        let path = CGMutablePath()  // from 12 o'clock, clockwise
+        path.addArc(center: CGPoint(x: bounds.midX, y: bounds.midY), radius: bounds.width / 2 - 1.5,
+                    startAngle: .pi / 2, endAngle: .pi / 2 - 2 * .pi, clockwise: true)
+        let track = CAShapeLayer()
+        for (l, c) in [(track, white(0.2)), (bar, color)] {
+            l.path = path; l.fillColor = nil; l.lineWidth = 2.2; l.lineCap = .round; l.strokeColor = c.cgColor
+            layer!.addSublayer(l)
+        }
+        bar.strokeEnd = 0
+        let icon = NSImageView(image: sym(symbol, 8, .bold))
+        icon.contentTintColor = color
+        icon.frame = bounds
+        addSubview(icon)
+    }
+    required init?(coder: NSCoder) { fatalError() }
 }
 
 // MARK: - Window
 
 final class RootView: NSView {
-    var onDrag: (Bool) -> Void = { _ in }
-    var onDrop: ([URL]) -> Void = { _ in }
+    var onDrag: (NSPoint?) -> Void = { _ in }  // a file drag's window position while over us; nil once it leaves
+    var onDrop: ([URL], NSPoint) -> Void = { _, _ in }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -284,17 +357,17 @@ final class RootView: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    override func draggingEntered(_ s: NSDraggingInfo) -> NSDragOperation {
-        if s.draggingSource is DragOutView { return [] }
-        onDrag(true)
+    override func draggingEntered(_ s: NSDraggingInfo) -> NSDragOperation { draggingUpdated(s) }
+    override func draggingUpdated(_ s: NSDraggingInfo) -> NSDragOperation {
+        if s.draggingSource is DragOutView { return [] }  // our own shelf files: not back onto ourselves
+        onDrag(s.draggingLocation)
         return .copy
     }
-    override func draggingUpdated(_ s: NSDraggingInfo) -> NSDragOperation { s.draggingSource is DragOutView ? [] : .copy }
-    override func draggingExited(_ s: NSDraggingInfo?) { onDrag(false) }
+    override func draggingExited(_ s: NSDraggingInfo?) { onDrag(nil) }
     override func performDragOperation(_ s: NSDraggingInfo) -> Bool {
         let urls = s.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
-        onDrag(false)
-        onDrop(urls)
+        onDrag(nil)
+        onDrop(urls, s.draggingLocation)
         return !urls.isEmpty
     }
 }
