@@ -29,6 +29,10 @@ if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLi
         controller.expanded.setDragging(true)
         try? await Task.sleep(for: .seconds(0.6))
         controller.snapshot(dir.appendingPathComponent("7-drop.png"))
+        controller.expanded.showMeeting("Design review · in 4m", color: .systemPurple,
+                                        join: URL(string: "https://meet.google.com/abc-defg-hij"))
+        try? await Task.sleep(for: .seconds(0.3))
+        controller.snapshot(dir.appendingPathComponent("7b-join.png"))
 
         // The robot in each kind of spot, around the resting island
         controller.expanded.setDragging(false)

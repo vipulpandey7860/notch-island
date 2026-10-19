@@ -27,6 +27,7 @@ func readPower() -> Power {
 final class Meetings {
     private let store = EKEventStore()
     private(set) var next: EKEvent?
+    private(set) var link: URL?  // the next meeting's video-call link, if it has one
     var onChange: () -> Void = {}
 
     func start() {
@@ -36,8 +37,8 @@ final class Meetings {
         }
     }
 
-    /// The next timed event in the coming 12 hours. One that already started stays for its first
-    /// 10 minutes ("now"), then gives way, so a long block doesn't hide the meeting after it.
+    /// The next timed event in the coming 12 hours that you haven't declined. One that already started
+    /// stays for its first 10 minutes ("now"), then gives way, so a long block doesn't hide the meeting after it.
     func refresh() {
         guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return }
         let now = Date()
@@ -45,9 +46,26 @@ final class Meetings {
                                                                     end: now.addingTimeInterval(12 * 3600), calendars: nil))
         next = found
             .filter { !$0.isAllDay && $0.status != .canceled && $0.startDate > now.addingTimeInterval(-600) && $0.endDate > now }
+            .filter { $0.attendees?.first(where: \.isCurrentUser)?.participantStatus != .declined }
             .min { $0.startDate < $1.startDate }
+        link = next.flatMap { callLink(in: [$0.url?.absoluteString, $0.location, $0.notes].compactMap { $0 }) }
         onChange()
     }
+}
+
+/// The first video-call link (Google Meet, Zoom, Teams, Webex…) in some event text. Google Calendar
+/// puts Meet links in the event's notes; Zoom and Teams invites usually use the location or notes.
+func callLink(in texts: [String]) -> URL? {
+    let hosts = ["meet.google.com", "zoom.us", "teams.microsoft.com", "teams.live.com", "webex.com",
+                 "whereby.com", "meet.jit.si", "chime.aws"]
+    let text = texts.joined(separator: "\n")
+    guard let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return nil }
+    return detector.matches(in: text, range: NSRange(text.startIndex..., in: text))
+        .compactMap(\.url)
+        .first { url in
+            guard let host = url.host?.lowercased() else { return false }
+            return hosts.contains { host == $0 || host.hasSuffix("." + $0) }  // e.g. us02web.zoom.us, not notzoom.us
+        }
 }
 
 /// "now", "in 4m", "in 1h 20m", or a clock time when it's further out.

@@ -17,6 +17,8 @@ final class ExpandedView: FlippedView {
     let remaining = label("", 10, .medium, white(0.45), mono: true)
     let cal = NSImageView(image: sym("calendar", 11))
     let meeting = label("", 12, .medium, white(0.65))
+    let join = PillButton("Join", symbol: "video.fill", color: .systemGreen, width: 58)
+    private var joinURL: URL?
     let net = label("↓0 KB/s  ↑0 KB/s", 11, .medium, white(0.6), mono: true)
     let batt = NSImageView()
     let pct = label("", 12, .medium, white(0.65))
@@ -39,6 +41,10 @@ final class ExpandedView: FlippedView {
         // Header band, either side of the notch
         cal.contentTintColor = white(0.55); cal.frame = NSRect(x: 24, y: 9, width: 14, height: 14)
         put(meeting, 44, 16, 180)
+        meeting.lineBreakMode = .byTruncatingMiddle  // a long title gives way before "in 4m" does
+        join.frame.origin.y = 6
+        join.isHidden = true
+        join.action = { [unowned self] in if let url = self.joinURL { NSWorkspace.shared.open(url) } }
         put(pct, w - 58, 16, 34, align: .right)
         batt.contentTintColor = white(0.65); batt.frame = NSRect(x: w - 88, y: 8, width: 28, height: 16)
         put(net, w - 248, 16, 150, align: .right)
@@ -72,7 +78,7 @@ final class ExpandedView: FlippedView {
         ([divider, shelfTitle, dragAll, grid, drop] as [NSView]).forEach(shelfRow.addSubview)
         shelfRow.alphaValue = 0; shelfRow.isHidden = true
 
-        ([cal, meeting, pct, batt, net, art, title, artist, bars, source, progress, rider, elapsed, remaining,
+        ([cal, meeting, join, pct, batt, net, art, title, artist, bars, source, progress, rider, elapsed, remaining,
           prev, play, next, shelfRow] as [NSView]).forEach(addSubview)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -122,9 +128,16 @@ final class ExpandedView: FlippedView {
         batt.image = sym(p.plugged ? "battery.100percent.bolt" : levels[min(4, (p.level + 12) / 25)], 13, .regular)
     }
 
-    func showMeeting(_ text: String, color: NSColor?) {
+    /// `join` adds a Join button right after the text.
+    func showMeeting(_ text: String, color: NSColor?, join url: URL? = nil) {
         meeting.stringValue = text
         cal.contentTintColor = color ?? white(0.55)
+        joinURL = url
+        join.isHidden = url == nil
+        // The label hugs its text so the button sits just after it, both stopping short of the notch
+        let room = (Self.width - c.notchW) / 2 - meeting.frame.minX - 10 - (url == nil ? 0 : join.frame.width + 8)
+        meeting.frame.size.width = min(ceil(meeting.fittingSize.width), room)
+        join.frame.origin.x = meeting.frame.maxX + 8
     }
 
     func showShelf(_ files: [URL]) {

@@ -137,6 +137,36 @@ final class IconButton: NSView {
     override func accessibilityPerformPress() -> Bool { action(); return true }
 }
 
+/// A small coloured pill with a symbol and a word, like "Join".
+final class PillButton: NSView {
+    var action: () -> Void = {}
+
+    init(_ title: String, symbol: String, color: NSColor, width: CGFloat) {
+        super.init(frame: NSRect(x: 0, y: 0, width: width, height: 20))
+        wantsLayer = true; layer!.cornerRadius = 10; layer!.backgroundColor = color.cgColor
+        let icon = NSImageView(image: sym(symbol, 9))
+        icon.contentTintColor = .white
+        icon.frame = NSRect(x: 8, y: 4, width: 13, height: 12)
+        let text = label(title, 11, .semibold)
+        put(text, 23, 10, width - 29)
+        addSubview(icon); addSubview(text)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self, userInfo: nil))
+        setAccessibilityElement(true); setAccessibilityRole(.button); setAccessibilityLabel(title)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func hitTest(_ p: NSPoint) -> NSView? { !isHidden && frame.contains(p) ? self : nil }
+    override func acceptsFirstMouse(for e: NSEvent?) -> Bool { true }
+    override func mouseEntered(with e: NSEvent) { alphaValue = 0.85 }
+    override func mouseExited(with e: NSEvent) { alphaValue = 1 }
+    override func mouseDown(with e: NSEvent) { alphaValue = 0.6 }
+    override func mouseUp(with e: NSEvent) {
+        alphaValue = 1
+        if bounds.contains(convert(e.locationInWindow, from: nil)) { action() }
+    }
+    override func accessibilityPerformPress() -> Bool { action(); return true }
+}
+
 /// Anything you can drag files out of. Finder decides move vs copy (same disk = move, ⌥ = copy).
 class DragOutView: NSView, NSDraggingSource {
     var files: [URL] = []

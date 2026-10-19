@@ -378,8 +378,12 @@ final class IslandController: NSObject {
     }
 
     func showMeeting() {
+        guard !frozen else { return }  // snapshot mode stages its own
         if let e = meetings.next {
-            expanded.showMeeting("\(e.title ?? "Event") · \(when(e.startDate))", color: e.calendar.color)
+            // Joinable from 10 minutes before until it ends
+            let joinable = e.startDate.timeIntervalSinceNow < 600 && e.endDate > Date()
+            expanded.showMeeting("\(e.title ?? "Event") · \(when(e.startDate))", color: e.calendar.color,
+                                 join: joinable ? meetings.link : nil)
         } else {
             expanded.showMeeting(Date().formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)), color: nil)
         }
