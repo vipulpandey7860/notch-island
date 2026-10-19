@@ -8,6 +8,7 @@ A Dynamic Island for the MacBook notch. It holds your files while you move them,
 - **Now playing.** Works with any app that reports to macOS (Spotify, Music, browsers): artwork, progress, play/pause, skip and seek.
 - **Heads-ups.** "Charging" when you plug in, and your next meeting 5 minutes before it starts.
 - **At a glance.** The open island shows your next meeting, network speed and battery.
+- **A tiny robot.** It lives around the notch on magnet boots: it walks the menu bar, climbs the notch's walls, hangs underneath, sits and dozes. It bobs to your music, watches files you drag, hops when you plug in, and yawns before meetings. With nothing going on it sleeps; with music it dances. Open the island and it rides the progress bar along with the song. Turn it off with right-click → Show Mascot.
 
 Hover over the notch to open it. Right-click the open island to quit.
 
@@ -39,6 +40,7 @@ Sources/NotchIsland/        the app
   main.swift                entry point
   IslandController.swift    island states, sizes, mouse and drag handling
   ExpandedView.swift        the open island: player, header, shelf
+  Mascot.swift              the pixel robot and its behaviour
   Views.swift               small reusable views
   Helpers.swift             layout, animation and shape helpers
   NowPlaying.swift          now-playing client and smoothing

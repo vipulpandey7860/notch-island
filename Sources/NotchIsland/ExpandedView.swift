@@ -9,8 +9,10 @@ final class ExpandedView: FlippedView {
     let title = label("", 15, .semibold)
     let artist = label("", 12, .regular, white(0.55))
     let source = label("", 11, .medium, white(0.35))
-    let bars = BarsView(frame: NSRect(x: 132, y: 96, width: 15, height: 12))
+    let bars = BarsView(frame: NSRect(x: 132, y: 88, width: 15, height: 12))
     let progress = ProgressBar(frame: NSRect(x: 132, y: 116, width: 484, height: 12))
+    // The robot walks on the bar: its top edge (y 120 here) is 12pt up from the rider view's bottom
+    let rider = RiderView(frame: NSRect(x: 120, y: 84, width: 508, height: 48), barX: 12, barWidth: 484, floorY: 12)
     let elapsed = label("", 10, .medium, white(0.45), mono: true)
     let remaining = label("", 10, .medium, white(0.45), mono: true)
     let cal = NSImageView(image: sym("calendar", 11))
@@ -41,10 +43,11 @@ final class ExpandedView: FlippedView {
         batt.contentTintColor = white(0.65); batt.frame = NSRect(x: w - 88, y: 8, width: 28, height: 16)
         put(net, w - 248, 16, 150, align: .right)
 
-        // Now playing: art left, controls on the title row, progress underneath
+        // Now playing: art left, controls on the title row with the player app under them,
+        // progress underneath (kept clear above for the robot)
         art.layer!.backgroundColor = white(0.08).cgColor
         art.contentTintColor = white(0.3)  // only tints the "nothing playing" note
-        put(title, 132, 60, 350); put(artist, 132, 80, 350); put(source, 154, 102, 300)
+        put(title, 132, 60, 350); put(artist, 132, 80, 350); put(source, 496, 94, 120, align: .right)  // clear of the robot's antenna near the end of a song
         put(elapsed, 132, 140, 60); put(remaining, 556, 140, 60, align: .right)
         let prev = IconButton("backward.fill", size: 32, point: 15, label: "Previous track") { c.nowPlaying.prev() }
         prev.frame.origin = NSPoint(x: 494, y: 54)
@@ -69,7 +72,7 @@ final class ExpandedView: FlippedView {
         ([divider, shelfTitle, dragAll, grid, drop] as [NSView]).forEach(shelfRow.addSubview)
         shelfRow.alphaValue = 0; shelfRow.isHidden = true
 
-        ([cal, meeting, pct, batt, net, art, title, artist, bars, source, progress, elapsed, remaining,
+        ([cal, meeting, pct, batt, net, art, title, artist, bars, source, progress, rider, elapsed, remaining,
           prev, play, next, shelfRow] as [NSView]).forEach(addSubview)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -86,15 +89,24 @@ final class ExpandedView: FlippedView {
         source.stringValue = t?.app ?? ""
         bars.isHidden = t == nil
         bars.color = t?.accent ?? .white
+        bars.frame.origin.x = 616 - ceil(source.fittingSize.width) - 21  // just left of the app name
+        // The bar stays as the robot's floor; only the times need a known length
         let timed = (t?.duration ?? 0) > 0
-        [progress, elapsed, remaining].forEach { $0.isHidden = !timed }
+        [elapsed, remaining].forEach { $0.isHidden = !timed }
+        if !timed { progress.fraction = 0 }
         let playing = t?.playing ?? false
         if playing != shownPlaying {
             shownPlaying = playing
             bars.setPlaying(playing)
             play.setSymbol(playing ? "pause.fill" : "play.fill", label: playing ? "Pause" : "Play")
         }
+        tick(t)
+    }
+
+    /// Once a second while playing: move the bar, the times and the robot riding it.
+    func tick(_ t: Track?) {
         if let t { showTime(t.position, t.duration) }
+        rider.update(t)
     }
 
     func showTime(_ e: Double, _ d: Double) {

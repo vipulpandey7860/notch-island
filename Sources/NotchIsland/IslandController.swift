@@ -12,6 +12,7 @@ final class IslandController: NSObject {
     let bg = CAShapeLayer(), glow = CAGradientLayer(), glowMask = CAShapeLayer()
     var expanded: ExpandedView!
     let nowPlaying = NowPlaying(), meetings = Meetings(), net = NetSpeed()
+    let mascot = Mascot()
     var power = readPower()
     var files: [URL] = []
     var mode = Mode.idle
@@ -54,14 +55,30 @@ final class IslandController: NSObject {
         glow.type = .radial; glow.frame = root.bounds; glow.mask = glowMask; glow.opacity = 0
         root.layer!.insertSublayer(glow, at: 0)
         root.layer!.insertSublayer(bg, at: 0)
+        // The robot sits under the island's layers, so a growing island simply covers it
+        UserDefaults.standard.register(defaults: ["showMascot": true])
+        mascot.topY = top
+        mascot.world = restingRect(.idle)
+        mascot.mouse = { [unowned self] in self.panel.mouseLocationOutsideOfEventStream }
+        mascot.container.isHidden = !UserDefaults.standard.bool(forKey: "showMascot")
+        root.layer!.insertSublayer(mascot.container, at: 0)
 
         expanded = ExpandedView(frame: expandedFrame, c: self)
         expanded.alphaValue = 0; expanded.isHidden = true
+        expanded.rider.isHidden = mascot.container.isHidden
         root.addSubview(expanded)
         root.onDrag = { [unowned self] in self.expanded.setDragging($0); self.refreshShelf() }
-        root.onDrop = { [unowned self] in self.addFiles($0) }
+        root.onDrop = { [unowned self] in
+            self.fileDrag = false  // the drop's mouse-up lands in our window, so the global monitor never sees it
+            self.mascot.setWatching(false)
+            self.addFiles($0)
+        }
         let menu = NSMenu()
         // TODO: add "Open at Login" (SMAppService.mainApp) and a way to reach this menu while collapsed
+        let robot = menu.addItem(withTitle: "Show Mascot", action: #selector(toggleMascot(_:)), keyEquivalent: "")
+        robot.target = self
+        robot.state = mascot.container.isHidden ? .off : .on
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Notch Island", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
         root.menu = menu  // right-click the open island
 
@@ -87,6 +104,22 @@ final class IslandController: NSObject {
         }
         nowPlaying.start()
         meetings.start()
+        mascot.start()
+        updateMascotMood()
+    }
+
+    func updateMascotMood() {
+        let mood: Mascot.Mood = playing ? .party : files.isEmpty ? .asleep : .calm
+        mascot.setMood(mood, accent: nowPlaying.track?.accent ?? .white)
+    }
+
+    @objc func toggleMascot(_ item: NSMenuItem) {
+        let on = item.state != .on
+        item.state = on ? .on : .off
+        UserDefaults.standard.set(on, forKey: "showMascot")
+        mascot.setVisible(on)
+        expanded.rider.isHidden = !on
+        if on, mode == .expanded { mascot.pause() }  // it's riding the bar right now
     }
 
     // MARK: Geometry
@@ -111,6 +144,11 @@ final class IslandController: NSObject {
     }
     func hot(_ m: Mode) -> CGRect { panel.convertToScreen(rect(m)).insetBy(dx: -10, dy: -10) }
 
+    /// What the robot walks around at rest: the island with its ears, or the bare hardware notch.
+    func restingRect(_ m: Mode) -> CGRect {
+        m == .music ? rect(.music) : CGRect(x: cx - notchW / 2, y: top - notchH, width: notchW, height: notchH)
+    }
+
     /// Morph the island to `m`'s shape: bounce when growing, settle without overshoot when shrinking.
     func reshape(to m: Mode, growing: Bool) {
         let p = path(m), b: CGFloat = growing ? 0.22 : 0
@@ -123,6 +161,7 @@ final class IslandController: NSObject {
         guard m != mode || force else { return }
         let was = mode, s0 = spec(was), s1 = spec(m)
         mode = m
+        if m == .idle || m == .music { mascot.setWorld(restingRect(m)) }
         let open = m == .expanded
         reshape(to: m, growing: s1.w * s1.h > s0.w * s0.h)
         animate(bg, "shadowOpacity", to: Float(open ? 0.6 : 0), spring: false)
@@ -143,6 +182,10 @@ final class IslandController: NSObject {
         gen += 1
         let g = gen, home = expandedFrame.origin
         if open {
+            // The robot hops inside to ride the progress bar
+            mascot.pause()
+            expanded.rider.setActive(true)
+            expanded.rider.update(nowPlaying.track)
             expanded.isHidden = false
             expanded.setFrameOrigin(NSPoint(x: home.x, y: home.y + (reduceMotion ? 0 : 10)))
             after(0.07) {
@@ -155,6 +198,8 @@ final class IslandController: NSObject {
                 }
             }
         } else if was == .expanded {
+            mascot.resume()
+            expanded.rider.setActive(false)
             NSAnimationContext.runAnimationGroup { $0.duration = 0.1; self.expanded.animator().alphaValue = 0 }
             after(0.12) { if g == self.gen { self.expanded.isHidden = true } }
         }
@@ -238,6 +283,7 @@ final class IslandController: NSObject {
         case .leftMouseUp: fileDrag = false
         default: break
         }
+        mascot.setWatching(fileDrag)
         trackMouse()
         refreshShelf()
     }
@@ -302,6 +348,7 @@ final class IslandController: NSObject {
         let t = nowPlaying.track
         expanded.show(t)
         tintGlow()
+        updateMascotMood()
         for v in liveArt where v.image !== t?.artwork {  // artwork often lands a beat after the title
             v.layer?.add(CATransition(), forKey: "swap")
             v.image = t?.artwork
@@ -312,13 +359,13 @@ final class IslandController: NSObject {
     }
 
     func tick(_ n: Int) {
-        if let t = nowPlaying.track { expanded.showTime(t.position, t.duration) }
+        expanded.tick(nowPlaying.track)
         let s = net.sample()
         expanded.net.stringValue = "↓\(rate(s.down))  ↑\(rate(s.up))"
 
         let p = readPower(), pluggedIn = p.plugged && !power.plugged
         if p != power { power = p; expanded.showPower(p) }
-        if pluggedIn { flash(.charging, 3.5) }
+        if pluggedIn { flash(.charging, 3.5); mascot.pluggedIn() }
 
         if n % 30 == 0 { meetings.refresh() } else { showMeeting() }
         // Heads-up 5 minutes before a meeting, once per event
@@ -326,6 +373,7 @@ final class IslandController: NSObject {
            (1...300).contains(e.startDate.timeIntervalSinceNow) {
             flashedMeeting = id
             flash(.meeting, 8)
+            mascot.meetingSoon()
         }
     }
 
@@ -344,12 +392,14 @@ final class IslandController: NSObject {
         NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
         expanded.showShelf(files)
         refreshShelf()
+        updateMascotMood()
     }
 
     func removeFiles(_ urls: [URL]) {
         files.removeAll(where: urls.contains)
         expanded.showShelf(files)
         refreshShelf()
+        updateMascotMood()
         if mode == .music || mode == .idle { setMode(base, force: true) }  // refresh the count, or tuck away
     }
 
