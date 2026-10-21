@@ -18,7 +18,7 @@ Hover over the notch to open it. Right-click the open island for the focus timer
 ## Requirements
 
 - macOS 14 or later
-- A MacBook with a notch (other displays get a basic pill for now)
+- A MacBook with a notch. Every other display (or the only one, with the lid closed) gets its own island, a notch-sized pill at the top centre
 - Xcode's Command Line Tools (`xcode-select --install`); full Xcode isn't needed
 
 ## Build
@@ -41,7 +41,8 @@ If a future macOS removes perl or closes this gap, now playing disappears and ev
 ```
 Sources/NotchIsland/        the app
   main.swift                entry point
-  IslandController.swift    island states, sizes, mouse and drag handling
+  Hub.swift                 shared state, and one island per display
+  IslandController.swift    one display's island: states, sizes, mouse and drag handling
   ExpandedView.swift        the open island: player, header, shelf
   Mascot.swift              the pixel robot and its behaviour
   ShelfActions.swift        AirDrop, share, compress and other shelf actions

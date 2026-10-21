@@ -7,13 +7,14 @@ import AppKit
 signal(SIGPIPE, SIG_IGN)  // the now-playing helper can exit any time; writing to it must not kill us
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
-let controller = IslandController()
+let hub = Hub()
 
 // `NotchIsland --snapshot DIR` renders every state to DIR/*.png and quits
 if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
     let dir = URL(fileURLWithPath: CommandLine.arguments[i + 1])
-    controller.frozen = true
-    controller.mascot.freeze()
+    let controller = hub.islands.first(where: \.hasNotch) ?? hub.islands[0]
+    hub.frozen = true
+    hub.islands.forEach { $0.mascot.freeze() }
     Task { @MainActor in
         try? await Task.sleep(for: .seconds(2))  // let now playing and the calendar arrive
         let shots: [(String, IslandController.Mode)] = [("1-music", .music), ("2-peek", .peek), ("3-charging", .charging),
