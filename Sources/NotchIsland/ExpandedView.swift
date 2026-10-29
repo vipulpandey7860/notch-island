@@ -51,11 +51,11 @@ final class ExpandedView: FlippedView {
         join.frame.origin.y = 6
         join.isHidden = true
         join.action = { [unowned self] in if let url = self.joinURL { NSWorkspace.shared.open(url) } }
-        put(pct, w - 58, 16, 34, align: .right)
-        batt.contentTintColor = white(0.65); batt.frame = NSRect(x: w - 88, y: 8, width: 28, height: 16)
+        put(pct, w - 64, 16, 40, align: .right)  // wide enough for "100%"
+        batt.contentTintColor = white(0.65); batt.frame = NSRect(x: w - 92, y: 8, width: 28, height: 16)
         put(net, w - 248, 16, 150, align: .right)
         // The focus countdown takes the network speed's place while it runs; click to stop
-        focusPill.frame.origin = NSPoint(x: w - 88 - 8 - focusPill.frame.width, y: 6)
+        focusPill.frame.origin = NSPoint(x: w - 92 - 8 - focusPill.frame.width, y: 6)
         focusPill.isHidden = true
         focusPill.toolTip = "Stop the focus timer"
         focusPill.action = { c.focus.stop() }
