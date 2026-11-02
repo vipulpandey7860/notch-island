@@ -38,9 +38,10 @@ Needs macOS 14 or later. It's made for MacBooks with a notch; every other displa
 
 ## Build it yourself
 
-Needs Xcode's Command Line Tools (`xcode-select --install`); full Xcode isn't needed.
+Needs Xcode's Command Line Tools (`xcode-select --install`); full Xcode isn't needed. The app lives in `apps/mac`:
 
 ```sh
+cd apps/mac
 ./build.sh        # builds build/NotchIsland.app
 ./build.sh run    # builds, then (re)launches it
 .build/release/NotchIsland --selftest   # checks dates, timers, rollover, reminders, agent hooks and update signatures
@@ -49,21 +50,23 @@ Needs Xcode's Command Line Tools (`xcode-select --install`); full Xcode isn't ne
 ## Releasing
 
 ```sh
+cd apps/mac
 ./release.sh --setup              # once: your update signing key (in your login keychain) and signing certificate
 ./release.sh 0.2.0 [NOTES.md]     # builds, signs and zips the app, tags the commit, publishes the GitHub release
 ```
 
-`--setup` puts the public half of the update key into `Resources/Info.plist`; commit it. Back up the secret half (`security find-generic-password -s "Notch Island update key" -w`): without it, copies already out there won't accept your updates. The certificate is self-signed, so it doesn't stop macOS's first-launch warning, but every release is signed the same way and keeps its permissions, like calendar access, across updates. Needs the [GitHub CLI](https://cli.github.com).
+`--setup` puts the public half of the update key into `apps/mac/Resources/Info.plist`; commit it. Back up the secret half (`security find-generic-password -s "Notch Island update key" -w`): without it, copies already out there won't accept your updates. The certificate is self-signed, so it doesn't stop macOS's first-launch warning, but every release is signed the same way and keeps its permissions, like calendar access, across updates. Needs the [GitHub CLI](https://cli.github.com).
 
 ## How now playing works
 
-Since macOS 15.4, the system's MediaRemote framework only answers Apple-signed processes. Notch Island runs `/usr/bin/perl` (Apple-signed), which loads Notch Island's own small helper library, [`Sources/NowPlayingHelper`](Sources/NowPlayingHelper). The helper streams now-playing updates as JSON lines and takes play/pause/skip/seek commands. The approach comes from [ungive/mediaremote-adapter](https://github.com/ungive/mediaremote-adapter); Notch Island's helper is written from scratch.
+Since macOS 15.4, the system's MediaRemote framework only answers Apple-signed processes. Notch Island runs `/usr/bin/perl` (Apple-signed), which loads Notch Island's own small helper library, [`apps/mac/Sources/NowPlayingHelper`](apps/mac/Sources/NowPlayingHelper). The helper streams now-playing updates as JSON lines and takes play/pause/skip/seek commands. The approach comes from [ungive/mediaremote-adapter](https://github.com/ungive/mediaremote-adapter); Notch Island's helper is written from scratch.
 
 If a future macOS removes perl or closes this gap, now playing disappears and everything else keeps working.
 
 ## Project layout
 
 ```
+apps/mac/                   the Mac app; everything below is inside it
 Sources/NotchIsland/        the app
   main.swift                entry point
   Hub.swift                 shared state, and one island per display
