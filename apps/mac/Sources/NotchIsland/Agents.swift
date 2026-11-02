@@ -120,30 +120,45 @@ final class Agents {
             let root = cwd.hasSuffix("/") ? cwd : cwd + "/"
             if !cwd.isEmpty, path.hasPrefix(root), !path.contains("/../") {
                 let s = "\(verb) \(path.dropFirst(root.count))"
-                return (s, fits(s))
+                return (visible(s), fits(s) && !hidesSomething(s))
             }
-            return ("\(verb) \((path as NSString).abbreviatingWithTildeInPath)", false)  // outside the project
+            return (visible("\(verb) \((path as NSString).abbreviatingWithTildeInPath)"), false)  // outside the project
         }
         switch tool {
         case "Bash":
             let cmd = (input["command"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            let lines = cmd.split(separator: "\n", omittingEmptySubsequences: false)
-            if lines.count > 1 { return ("\(lines[0]) (+\(lines.count - 1) more lines)", false) }
-            return (cmd.isEmpty ? "Run a command" : cmd, !cmd.isEmpty && fits(cmd))
+            guard hidesSomething(cmd) else { return (cmd.isEmpty ? "Run a command" : cmd, !cmd.isEmpty && fits(cmd)) }
+            // Split on every kind of line break, by Unicode scalar: Swift counts "\r\n" as one character
+            let lines = cmd.unicodeScalars.split { CharacterSet.newlines.contains($0) }.map { String(String.UnicodeScalarView($0)) }
+            let first = visible(lines.first ?? "")
+            return (lines.count > 1 ? "\(first) (+\(lines.count - 1) more lines)" : "\(first) (see the terminal)", false)
         case "Edit", "MultiEdit", "NotebookEdit": return file("Edit")
         case "Write": return file("Write")
         case "Read": return file("Read")
         case "WebFetch":
             let s = "Fetch \(input["url"] as? String ?? "")"
-            return (s, fits(s))
+            return (visible(s), fits(s) && !hidesSomething(s))
         case "WebSearch":
             let s = "Search for “\(input["query"] as? String ?? "")”"
-            return (s, fits(s))
+            return (visible(s), fits(s) && !hidesSomething(s))
         default:
             guard tool.hasPrefix("mcp__") else { return (tool, false) }
             let parts = tool.split(separator: "_")  // mcp__server__tool
             return ("\(parts.dropFirst().first ?? "MCP"): \(parts.last ?? "")", false)
         }
+    }
+
+    /// Characters a one-line title can't show faithfully: line breaks of any kind, control characters, and invisible
+    /// formatting such as zero-width spaces and right-to-left overrides (Unicode Cc, Cf, Zl, Zp).
+    static func hidesSomething(_ s: String) -> Bool {
+        s.unicodeScalars.contains { CharacterSet.newlines.contains($0) || CharacterSet.controlCharacters.contains($0) }
+    }
+
+    /// The same text with each such character shown as �, so it can't pass for something else.
+    static func visible(_ s: String) -> String {
+        String(String.UnicodeScalarView(s.unicodeScalars.map {
+            CharacterSet.newlines.contains($0) || CharacterSet.controlCharacters.contains($0) ? "\u{FFFD}" : $0
+        }))
     }
 
     static func decision(_ allow: Bool) -> Data {
@@ -306,6 +321,12 @@ extension Agents {
         precondition(asked?.complete == true, "a short command is complete")
         let cwd = "/Users/me/app"
         precondition(!summary("Bash", ["command": "ls\nrm -rf ~"], cwd: cwd).complete, "a second line is hidden")
+        precondition(!summary("Bash", ["command": "ls\r\nrm -rf ~"], cwd: cwd).complete, "\\r\\n is a line break too")
+        precondition(summary("Bash", ["command": "ls\r\nrm -rf ~"], cwd: cwd).0 == "ls (+1 more lines)", "counted by scalar")
+        precondition(!summary("Bash", ["command": "ls\u{2028}rm -rf ~"], cwd: cwd).complete, "Unicode line separator")
+        precondition(!summary("Bash", ["command": "echo \u{202E}~ fr- mr"], cwd: cwd).complete, "right-to-left override")
+        precondition(!summary("Bash", ["command": "rm\u{200B} -rf ~"], cwd: cwd).complete, "zero-width space")
+        precondition(!summary("Edit", ["file_path": "/Users/me/app/a\u{202E}fiws.swift"], cwd: cwd).complete, "a disguised file name")
         precondition(!summary("Bash", ["command": String(repeating: "echo ok && ", count: 20)], cwd: cwd).complete, "too long to show")
         precondition(summary("Edit", ["file_path": "/Users/me/app/Sources/A.swift"], cwd: cwd) == ("Edit Sources/A.swift", true), "in the project")
         precondition(!summary("Read", ["file_path": "/Users/me/.ssh/id_rsa"], cwd: cwd).complete, "outside the project")
