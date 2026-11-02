@@ -57,6 +57,18 @@ cd apps/mac
 
 `--setup` puts the public half of the update key into `apps/mac/Resources/Info.plist`; commit it. Back up the secret half (`security find-generic-password -s "Notch Island update key" -w`): without it, copies already out there won't accept your updates. The certificate is self-signed, so it doesn't stop macOS's first-launch warning, but every release is signed the same way and keeps its permissions, like calendar access, across updates. Needs the [GitHub CLI](https://cli.github.com).
 
+## Website
+
+The site lives in `apps/web`: [TanStack Start](https://tanstack.com/start) on Cloudflare Workers, with the one page prerendered to static HTML. The page itself is `src/site/page.html`, its styles `site.css`, and `site.js` runs the island and the demos.
+
+```sh
+pnpm install         # once, at the root
+pnpm dev             # http://localhost:3000
+pnpm deploy:web      # builds and deploys to Cloudflare (run `pnpm --filter web exec wrangler login` once first)
+```
+
+To deploy on every push instead, connect the repo in the Cloudflare dashboard (Workers → Create → Import a repository) with the root directory set to `apps/web`, build command `pnpm run build` and deploy command `npx wrangler deploy`.
+
 ## How now playing works
 
 Since macOS 15.4, the system's MediaRemote framework only answers Apple-signed processes. Notch Island runs `/usr/bin/perl` (Apple-signed), which loads Notch Island's own small helper library, [`apps/mac/Sources/NowPlayingHelper`](apps/mac/Sources/NowPlayingHelper). The helper streams now-playing updates as JSON lines and takes play/pause/skip/seek commands. The approach comes from [ungive/mediaremote-adapter](https://github.com/ungive/mediaremote-adapter); Notch Island's helper is written from scratch.
@@ -66,6 +78,7 @@ If a future macOS removes perl or closes this gap, now playing disappears and ev
 ## Project layout
 
 ```
+apps/web/                   the website (TanStack Start on Cloudflare)
 apps/mac/                   the Mac app; everything below is inside it
 Sources/NotchIsland/        the app
   main.swift                entry point

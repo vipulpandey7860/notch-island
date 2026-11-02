@@ -1,0 +1,295 @@
+<header class="menubar">
+  <nav aria-label="Site">
+    <a class="app" href="#top"><canvas id="menuBot" width="48" height="32" aria-hidden="true"></canvas>Notch Island</a>
+    <a href="#tasks">Tasks</a><a href="#agents">Agents</a><a href="#files">Files</a><a href="#clips">Clips</a><a href="#music">Music</a><a href="#robot">Robot</a><a class="keep" href="#get">Get it</a>
+  </nav>
+  <div class="status" aria-hidden="true">
+    <span class="batt">84%<i><b></b></i></span>
+    <svg class="wifi" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M1.8 6.2a9 9 0 0 1 12.4 0M4 8.6a5.8 5.8 0 0 1 8 0M6.2 11a2.6 2.6 0 0 1 3.6 0"/></svg>
+    <span><span class="clock-long" id="clockDay"></span> <span id="clockTime"></span></span>
+  </div>
+</header>
+
+<!-- The island. Each layer is one of its real states; the section in view picks which. -->
+<div class="island" id="island" data-s="idle" aria-hidden="true">
+  <i class="ear l"></i><i class="ear r"></i>
+  <canvas id="bot"></canvas><span class="say" id="say"></span>
+  <div class="clip">
+
+    <div class="layer ws" data-l="expanded">
+      <div class="hdr">
+        <div><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#bf5af2" stroke-width="1.6"><rect x="2.5" y="3.3" width="11" height="10" rx="2"/><path d="M2.5 6.6h11M5.5 2v2.4M10.5 2v2.4"/></svg>
+          <span class="mtg">Design review · in 12m</span><button class="pill green" tabindex="-1"><svg width="11" height="11" viewBox="0 0 16 16" fill="#fff"><rect x="1.5" y="4" width="9" height="8" rx="2"/><path d="M11 7l3.5-2v6L11 9z"/></svg>Join</button></div>
+        <div class="r"><span class="net">↓1.2 MB/s  ↑84 KB/s</span>
+          <svg width="24" height="13" viewBox="0 0 24 13" fill="none"><rect x=".6" y=".6" width="20" height="11.8" rx="3.4" stroke="rgba(255,255,255,.65)" stroke-width="1.2"/><rect x="2.5" y="2.5" width="14" height="8" rx="1.6" fill="rgba(255,255,255,.65)"/><rect x="22" y="4.5" width="1.6" height="4" rx=".8" fill="rgba(255,255,255,.65)"/></svg>
+          <span class="pct">84%</span></div>
+      </div>
+      <div class="cards">
+        <section class="card today" aria-label="Today's tasks">
+          <div class="ch"><span class="ttl"><span id="dayTitle">Today</span><span class="tabs"><button data-tab="todo" class="on" tabindex="-1">To do<b id="nTodo"></b></button><button data-tab="done" tabindex="-1">Done<b id="nDone"></b></button></span></span>
+            <span class="daynav"><button id="prevDay" tabindex="-1" aria-label="Previous day"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 3.5 5.5 8l4.5 4.5"/></svg></button>
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2.5" y="3.3" width="11" height="10" rx="2"/><path d="M2.5 6.6h11"/></svg>&nbsp;<span id="dayDate"></span>
+              <button id="nextDay" tabindex="-1" aria-label="Next day"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3.5 10.5 8 6 12.5"/></svg></button></span></div>
+          <div class="list" id="list"></div>
+          <div class="hint" id="hint" hidden></div>
+          <label class="box"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>
+            <span class="field"><span class="mirror" id="mirror"></span><input id="inp" tabindex="-1" placeholder="Add a task…   try “call mom tomorrow 5pm”" autocomplete="off" spellcheck="false" aria-label="Add a task"></span>
+            <span class="keycap" id="keycap">⌥N</span></label>
+        </section>
+        <section class="card note" aria-label="Notepad">
+          <div class="ch"><span class="ttl">Notepad</span><span class="daynav" id="noteDate"></span></div>
+          <div class="notetext" id="note" contenteditable="true" spellcheck="false" tabindex="-1"><div>Lead the review with the notch demo</div><div>Weekly recap every Friday?</div><div>Email Sam about the API friday</div></div>
+          <div class="nf"><span id="words"></span><span>⌘↩ line → task</span></div>
+        </section>
+        <section class="card player" aria-label="Now playing">
+          <span class="tint"></span>
+          <div class="mrow"><span class="art" style="width:76px;height:76px"></span><div><div class="song">Slow Tide</div><div class="artist">Harbor Lights</div><div class="src"><span class="eq"><i></i><i></i><i></i><i></i></span>Music</div></div></div>
+          <div class="ctrls">
+            <button tabindex="-1" aria-label="Previous track"><svg width="18" height="18" viewBox="0 0 16 16" fill="#fff"><path d="M8 4v8L2 8zM14 4v8L8 8z"/></svg></button>
+            <button class="pp" id="pp" tabindex="-1" aria-label="Pause"><svg width="20" height="20" viewBox="0 0 16 16" fill="#fff" id="ppIcon"><rect x="4" y="3" width="2.8" height="10" rx=".8"/><rect x="9.2" y="3" width="2.8" height="10" rx=".8"/></svg></button>
+            <button tabindex="-1" aria-label="Next track"><svg width="18" height="18" viewBox="0 0 16 16" fill="#fff"><path d="M8 4v8l6-4zM2 4v8l6-4z"/></svg></button>
+          </div>
+          <div class="prog"><canvas id="rider"></canvas><div class="track"><i id="pbar"></i></div><div class="times"><span id="pe"></span><span id="pr"></span></div></div>
+        </section>
+      </div>
+    </div>
+
+    <div class="layer ears" data-l="music" style="width:270px"><span class="art" style="width:20px;height:20px"></span><span class="eq"><i></i><i></i><i></i><i></i></span></div>
+
+    <div class="layer peek" data-l="peek" style="width:390px"><span class="art" id="peekArt" style="width:36px;height:36px;border-radius:9px"></span><span class="t"><b id="peekTitle"></b><span id="peekSub"></span></span><span class="eq" id="peekEq"><i></i><i></i><i></i><i></i></span></div>
+
+    <div class="layer ears" data-l="shelf" style="width:270px"><svg width="20" height="16" viewBox="0 0 20 16" fill="rgba(255,255,255,.85)"><path d="M3.2 2h13.6l2.7 6.6V13a2 2 0 0 1-2 2H2.5a2 2 0 0 1-2-2V8.6zM2.6 8.5h4.6a2.8 2.8 0 0 0 5.6 0h4.6L15.6 3.5H4.4z"/></svg><span class="count" id="shelfCount">0</span></div>
+
+    <div class="layer drop" data-l="drop" style="width:460px"><span class="zone" id="zoneHold"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.5v9M6.5 8 10 11.5 13.5 8M3 12.5v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></svg><span id="holdText">Drop files here</span></span><span class="zone air" id="zoneAir"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8.5" r="1.3"/><path d="M5.3 11.2a3.8 3.8 0 1 1 5.4 0M3.4 13.1a6.5 6.5 0 1 1 9.2 0"/></svg>AirDrop</span></div>
+
+    <div class="layer ears" data-l="download" style="width:302px"><svg class="ring" viewBox="0 0 18 18"><circle cx="9" cy="9" r="7.5" fill="none" stroke="rgba(255,255,255,.2)" stroke-width="2.2"/><circle id="ringBar" cx="9" cy="9" r="7.5" fill="none" stroke="#0a84ff" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="47.1" stroke-dashoffset="47.1" transform="rotate(-90 9 9)"/><path d="M9 5.5v6M6.8 9.4 9 11.6l2.2-2.2" stroke="#0a84ff" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg><span class="tint" id="dlPct">0%</span></div>
+
+    <div class="layer ears" data-l="charging" style="width:398px"><span style="display:flex;align-items:center;gap:6px"><svg width="11" height="14" viewBox="0 0 11 14" fill="#30d158"><path d="M6.5 0 0 8h4.5L3.5 14 11 5.5H6.2z"/></svg>Charging</span>
+      <span style="display:flex;align-items:center;gap:8px;color:#30d158">84%<svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x=".5" y=".5" width="21" height="11" rx="3.5" stroke="rgba(255,255,255,.4)"/><rect id="chargeFill" x="2.5" y="2.5" width="0" height="7" rx="1.5" fill="#30d158" style="transition:width 1.4s var(--ease) .3s"/><rect x="23" y="4" width="2" height="4" rx="1" fill="rgba(255,255,255,.4)"/></svg></span></div>
+
+    <div class="layer ears" data-l="meeting" style="width:410px"><span style="display:flex;align-items:center;gap:7px"><i style="width:7px;height:7px;border-radius:50%;background:#bf5af2"></i>Design review</span><span class="tint" style="color:#ff9f0a">in 4m</span></div>
+
+    <div class="layer ears" data-l="timer" style="width:370px"><span style="display:flex;align-items:center;gap:6px"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#40c8e0" stroke-width="1.8" stroke-linecap="round"><circle cx="8" cy="9" r="5"/><path d="M8 9V6.4M6.3 1.8h3.4"/></svg>Tea</span><span class="tint" id="timerTime" style="color:#40c8e0">4:00</span></div>
+
+    <div class="layer ears" data-l="agent" style="width:382px"><span style="display:flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 16 16" fill="#ff9f0a"><path d="M8 1c.6 3.6 2.1 5.4 6 6-3.9.6-5.4 2.4-6 6-.6-3.6-2.1-5.4-6-6 3.9-.6 5.4-2.4 6-6z"/></svg>notch-island</span><span class="tint" id="agentTime" style="color:rgba(255,255,255,.7)">2:14</span></div>
+
+    <div class="layer peek" data-l="note" style="width:390px"><span class="noteicon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#0a84ff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3"/><circle cx="12" cy="12" r="3.2"/></svg></span><span class="t"><b>Screenshot</b><span>In Clips: open the island to drag it out</span></span></div>
+
+    <div class="layer alert" data-l="alert" style="width:420px">
+      <span class="avatar"><canvas id="alertBot"></canvas><span class="badge"><svg width="10" height="10" viewBox="0 0 16 16" fill="#000"><path d="M8 1.5a4.5 4.5 0 0 0-4.5 4.5v3L2 11.5h12L12.5 9V6A4.5 4.5 0 0 0 8 1.5zM6.2 13a1.9 1.9 0 0 0 3.6 0z"/></svg></span></span>
+      <span class="t"><b>Prep slides for design review</b><div class="due" id="alertDue"></div>
+        <div class="pills"><button class="pill grey" id="snooze" tabindex="-1"><svg width="11" height="11" viewBox="0 0 16 16" fill="#fff"><path d="M13 9.6A5.2 5.2 0 0 1 6.4 3a5.2 5.2 0 1 0 6.6 6.6z"/></svg>5 min</button><button class="pill orange" id="doneBtn" tabindex="-1"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 8.4l2.9 2.9 5.9-6.4"/></svg>Done</button></div></span>
+    </div>
+
+    <div class="layer alert" data-l="ask" style="width:420px">
+      <span class="avatar"><canvas id="askBot"></canvas><span class="badge"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5.5 8.5V4a1 1 0 0 1 2 0v3.5m0-4.5V2.5a1 1 0 0 1 2 0v5m0-3.5a1 1 0 0 1 2 0V8m0-2a1 1 0 0 1 2 0v3.5A5 5 0 0 1 8.5 14.5a4.6 4.6 0 0 1-3.8-2L2.9 9.8a1 1 0 0 1 1.6-1.2l1 .9"/></svg></span></span>
+      <span class="t"><b>swift build -c release</b><div class="due">Claude Code · notch-island</div>
+        <div class="pills"><button class="pill green" id="allow" tabindex="-1"><svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3.6 8.4l2.9 2.9 5.9-6.4"/></svg>Allow</button><button class="pill" style="background:#ff453a" id="deny" tabindex="-1"><svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>Deny</button><button class="pill grey" id="interm" tabindex="-1"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M4.5 6.5l2 1.8-2 1.8M8.5 10.5h3"/></svg>In terminal</button></div></span>
+    </div>
+  </div>
+</div>
+
+<main id="top">
+  <section class="hero" data-island="idle">
+    <div class="stage" aria-hidden="true">
+      <span class="mouse"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/></svg>Hover over the notch to open it</span>
+      <span class="touch"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/></svg>Tap the notch to open it</span>
+    </div>
+    <h1>Your notch,<br>put to work.</h1>
+    <p class="lede">Notch Island turns the black strip at the top of your MacBook into a small workspace: today's tasks, a note for the day, what's playing, what you've copied and what your coding agents are up to. It's native, free and open source, and a tiny robot lives on it.</p>
+    <div class="actions">
+      <a class="btn" href="#get">Get Notch Island</a>
+      <a class="link" href="#tasks">See what it does</a>
+    </div>
+    <p class="small">For MacBooks running macOS 14 or later. Free and open source under the GPL-3.0.</p>
+  </section>
+
+  <section id="tasks" data-island="expanded" style="padding-top:calc(32px + 304px * var(--k) + 6vh)">
+    <div class="feat">
+      <div>
+        <h2>Type it the way you'd say it</h2>
+        <p><q>Call mom tomorrow at 5pm</q> goes onto tomorrow's list with a 5 PM reminder. Before you press Return, the line above the box shows exactly what will be saved.</p>
+        <p>Try it in the island up there: click the box and type a task with a day or a time in it.</p>
+        <ul>
+          <li>Tasks without a time stay on today's list until you finish them. A reminder you missed turns red and says Overdue.</li>
+          <li><kbd>⌥N</kbd> opens the island from any app with the cursor in the box. The app you're in stays in front, and <kbd>esc</kbd> hands the keyboard back.</li>
+          <li>Each day has a note that saves as you type. <kbd>⌘↩</kbd> turns the line you're on into a task.</li>
+          <li>Double-click a task to edit it. Its menu sets a reminder, moves it to another day or deletes it.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="alert" data-island="alert">
+    <div class="feat solo">
+      <div>
+        <h2>When it's time, the notch says so</h2>
+        <p>At the reminder time the island drops down with a chime, whatever app you're in, and the robot waves at you. Snooze it for five minutes or tick it off. Nothing goes to Notification Center.</p>
+        <span class="look"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/></svg>Look up at the notch, and try its buttons</span>
+        <p class="status-line" id="alertStatus" aria-live="polite"></p>
+        <button class="link again" id="again" hidden>Show the alert again</button>
+      </div>
+    </div>
+    <figure class="zoom" data-zoom="alert" aria-hidden="true"></figure>
+  </section>
+
+  <section id="agents" data-island="ask">
+    <div class="feat solo">
+      <div>
+        <h2>Keep an eye on Claude Code</h2>
+        <p>Connect Claude Code in Settings, and while it works, the project and how long it's been at it sit beside the notch, with the robot typing at its desk. When it wants to run something, the notch shows exactly what, with <b>Allow</b>, <b>Deny</b> and <b>In terminal</b>. Codex tells you when it finishes a turn.</p>
+        <p>Allow only appears when the notch can show the whole request. A command over several lines, a file outside your project, or anything with hidden characters goes to the terminal, where you can read all of it.</p>
+        <span class="look"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/></svg>Look up at the notch, and try its buttons</span>
+        <p class="status-line" id="askStatus" aria-live="polite"></p>
+        <button class="link again" id="askAgain" hidden>Ask again</button>
+      </div>
+    </div>
+    <figure class="zoom" data-zoom="agent" aria-hidden="true"></figure>
+  </section>
+
+  <section id="files" data-island="files">
+    <div class="feat">
+      <div>
+        <h2>Park files in the notch</h2>
+        <p>Drag files up to the notch and let go. They wait there while you find the folder or app they're going to, then you drag them back out. On the same disk they move; hold <kbd>⌥</kbd> to copy.</p>
+        <ul>
+          <li>Drop on AirDrop instead and they're on their way.</li>
+          <li>Right-click a file to share, compress, copy its path or show it in Finder. <q>Drag all</q> takes the whole stack.</li>
+          <li>Safari and Chrome downloads show a progress ring beside the notch, and land on the shelf when they finish.</li>
+        </ul>
+      </div>
+      <div class="desk">
+        <div class="files" id="files-desk">
+          <button class="file" data-name="Q4-report.pdf"><span class="doc pdf"><span>PDF</span></span>Q4-report.pdf</button>
+          <button class="file" data-name="hero@2x.png"><span class="doc img"></span>hero@2x.png</button>
+          <button class="file" data-name="brand-kit.zip"><span class="doc zip"><span>ZIP</span></span>brand-kit.zip</button>
+        </div>
+        <p class="status-line" id="filesStatus" aria-live="polite">Drag one up into the notch. With a keyboard, press Return on a file.</p>
+        <div class="under"><button class="ghostbtn" id="dl"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.8v9.4M4.6 8.8 8 12.2l3.4-3.4"/></svg>Start a download</button>
+          <button class="link" id="emptyShelf" hidden>Empty the shelf</button></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="clips" data-island="note">
+    <div class="feat">
+      <div>
+        <h2>What you copied, a click away</h2>
+        <p>Everything you copy and every screenshot you take collects in the Clips tab, next to the notepad. Click one to copy it again, or drag it straight into another app.</p>
+        <ul>
+          <li>Take a screenshot and the notch tells you it's there.</li>
+          <li>Clips live in memory only, so they're gone when you quit. Anything a password manager marks as secret is never kept.</li>
+        </ul>
+      </div>
+      <div class="cliplist" id="clipDemo">
+        <span class="tabs"><button tabindex="-1">Notepad</button><button class="on" tabindex="-1">Clips<b>3</b></button></span>
+        <button class="cliprow" data-copy="https://github.com/vipulpandey7860/notch-island"><i><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h7"/></svg></i><span><b>https://github.com/vipulpandey7860/notch-island</b><small>Text · just now</small></span></button>
+        <button class="cliprow" data-copy=""><i class="shot"></i><span><b>Screenshot 2026-11-02 at 14.32.10</b><small>Screenshot · 2 min ago</small></span></button>
+        <button class="cliprow" data-copy="cd notch-island/apps/mac &amp;&amp; ./build.sh run"><i><svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2.5 4h11M2.5 8h11M2.5 12h7"/></svg></i><span><b>cd notch-island/apps/mac &amp;&amp; ./build.sh run</b><small>Text · 5 min ago</small></span></button>
+        <p class="cliphint" id="clipHint" aria-live="polite">Click to copy, or drag out</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="music" data-island="music">
+    <div class="feat solo">
+      <div>
+        <h2>Whatever's playing, from any app</h2>
+        <p>Spotify, Music or a tab in your browser: the artwork sits beside the notch and the robot dances. Open the island for a player with progress, play, skip and seek. Swipe two fingers across it to skip, or scroll over the bar to scrub.</p>
+        <span class="look"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/></svg>Look up at the notch</span>
+        <p><button class="ghostbtn" id="skip"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 4v8l6-4zM2 4v8l6-4z"/></svg>Skip to the next track</button></p>
+      </div>
+    </div>
+    <figure class="zoom" data-zoom="music" aria-hidden="true"></figure>
+  </section>
+
+  <section id="meetings" data-island="meeting">
+    <div class="feat solo">
+      <div>
+        <h2>Five minutes' warning</h2>
+        <p>Your next meeting comes from any calendar on your Mac, Google included. Five minutes before it starts, the island shows how long you've got, and the open island gets a Join button for the Meet, Zoom or Teams call. Meetings you declined are skipped.</p>
+        <span class="look"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/></svg>Look up at the notch</span>
+      </div>
+    </div>
+    <figure class="zoom" data-zoom="meeting" aria-hidden="true"></figure>
+  </section>
+
+  <section id="timers" data-island="timer">
+    <div class="feat solo">
+      <div>
+        <h2>Timers you just type</h2>
+        <p>Type <q>tea 4 min</q> in the task box and press Return. The countdown sits beside the notch, and when it's up the notch drops down with <b>+1 min</b> and <b>Done</b>. <q>Call mom in 20 min</q> is still a task with a reminder.</p>
+        <p>For longer stretches, right-click the island for a focus timer: 25 minutes and a 5-minute break, or whatever lengths you set. The robot sits down at its desk and types until it rings.</p>
+        <span class="look"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/></svg>Look up at the notch</span>
+      </div>
+    </div>
+    <figure class="zoom" data-zoom="timer" aria-hidden="true"></figure>
+  </section>
+
+  <section id="glance" data-island="charging">
+    <div class="feat solo">
+      <div>
+        <h2>And the small things</h2>
+        <ul>
+          <li>It says <q>Charging</q> when you plug in, and the open island shows your battery and network speed.</li>
+          <li>Every display gets its own island. External displays, and your MacBook with the lid closed, get a notch-sized one at the top.</li>
+          <li>Settings can open it at login, and switch off the robot, meetings or network speed.</li>
+        </ul>
+      </div>
+    </div>
+    <figure class="zoom" data-zoom="charging" aria-hidden="true"></figure>
+  </section>
+
+  <section id="robot" data-island="idle">
+    <div class="feat solo">
+      <div>
+        <h2>The robot that lives there</h2>
+        <p>It lives around the notch on magnet boots, so it can walk anywhere along the edge. It's beside the notch right now. Hover over a pose below to see it move.</p>
+      </div>
+    </div>
+    <div class="poses" id="poses"></div>
+  </section>
+
+  <section id="private" data-island="idle">
+    <div class="feat">
+      <div>
+        <h2>It stays on your Mac</h2>
+        <p>There's no account, no cloud and no analytics. Your tasks and notes are plain files in your Library folder, readable in any text editor. Clips stay in memory. Claude Code and Codex reach it through a socket in your Library folder that only you can open, and if Notch Island isn't running they carry on as before.</p>
+        <p>It's written in Swift with AppKit and uses no third-party code. One honest note: macOS only tells Apple's own apps what's playing, so Notch Island asks through the copy of perl that ships with macOS. If a future macOS closes that gap, now playing goes and everything else keeps working.</p>
+      </div>
+<pre class="tree" aria-label="Where Notch Island keeps your data"><span class="dim">~/Library/Application Support/</span>
+Notch Island/
+  tasks.json
+  Notes/
+    <span id="treeDay1"></span>
+    <span id="treeDay2"></span></pre>
+    </div>
+  </section>
+
+  <section id="get" class="get" data-island="idle">
+    <div class="feat solo">
+      <div>
+        <h2>Get it</h2>
+        <p>Download the latest release, unzip it and move Notch Island to your Applications folder. It's free, and if it earns a place in your menu bar, you can sponsor it.</p>
+        <div class="actions left"><a class="btn" href="https://github.com/vipulpandey7860/notch-island/releases/latest">Download Notch Island</a><a class="link" href="https://github.com/sponsors/vipulpandey7860">Sponsor it on GitHub</a></div>
+        <ol class="steps">
+          <li>The first time you open it, macOS says it can't check the app, because it isn't notarized by Apple (that needs a paid developer account). Open <b>System Settings → Privacy &amp; Security</b>, scroll down, and click <b>Open Anyway</b>. You only do this once.</li>
+          <li>After that it keeps itself up to date: once a day it checks for a new version, shows you what's new, and installs it when you click <b>Install and Relaunch</b>. Every update is checked against this project's release key first.</li>
+        </ol>
+        <p>Or build it yourself. It takes about a minute and needs only Xcode's Command Line Tools, not all of Xcode.</p>
+      </div>
+    </div>
+    <div class="shelfline"></div>
+<pre class="code" id="cmds"><button class="copy" id="copy">Copy</button><span class="c"># once, if you don't have the Command Line Tools</span>
+<span class="p">$ </span>xcode-select --install
+
+<span class="p">$ </span>git clone https://github.com/vipulpandey7860/notch-island.git
+<span class="p">$ </span>cd notch-island/apps/mac &amp;&amp; ./build.sh run</pre>
+    <div class="reqs"><span>macOS 14 or later. Made for MacBooks with a notch; other displays get one at the top.</span><a class="link" href="https://github.com/vipulpandey7860/notch-island">Open on GitHub</a></div>
+  </section>
+</main>
+
+<footer>
+  <span class="app"><canvas id="footBot" width="48" height="32" style="width:24px;height:16px;image-rendering:pixelated" aria-hidden="true"></canvas>Notch Island</span>
+  <nav><span class="lic">GPL-3.0</span><a class="link" href="https://github.com/vipulpandey7860/notch-island">Source on GitHub</a><a class="link" href="https://github.com/sponsors/vipulpandey7860">Sponsor</a><a class="link" href="#top">Back to the top</a></nav>
+</footer>

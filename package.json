@@ -1,0 +1,14 @@
+{
+  "name": "notch-island",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "dev": "pnpm --filter web dev",
+    "build": "pnpm --filter web build",
+    "deploy:web": "pnpm --filter web run deploy",
+    "mac": "apps/mac/build.sh run"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "workerd", "sharp"]
+  }
+}
