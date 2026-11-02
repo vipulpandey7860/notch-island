@@ -373,14 +373,39 @@ final class RootView: NSView {
 }
 
 final class IslandPanel: NSPanel {
+    var onEscape: () -> Void = {}
+
     init(_ frame: NSRect) {
         super.init(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isOpaque = false; backgroundColor = .clear; hasShadow = false
         level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)  // above the menu bar
         collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         hidesOnDeactivate = false; isMovable = false; ignoresMouseEvents = true
+        appearance = NSAppearance(named: .darkAqua)
+        // Takes the keyboard only for the task box and the notepad, and without making Notch Island the active
+        // app: the app you're in stays in front
+        becomesKeyOnlyIfNeeded = true
         setFrame(frame, display: false)
     }
     override func constrainFrameRect(_ r: NSRect, to s: NSScreen?) -> NSRect { r }  // allow sitting over the menu bar
-    override var canBecomeKey: Bool { false }
+    override var canBecomeKey: Bool { true }
+    override func cancelOperation(_ sender: Any?) { onEscape() }
+
+    /// An accessory app has no Edit menu, so ⌘X ⌘C ⌘V ⌘A ⌘Z ⇧⌘Z are wired up here.
+    override func performKeyEquivalent(with e: NSEvent) -> Bool {
+        let mods = e.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.capsLock)
+        guard mods == .command || mods == [.command, .shift], let key = e.charactersIgnoringModifiers?.lowercased() else {
+            return super.performKeyEquivalent(with: e)
+        }
+        let action: Selector? = switch key {
+        case "x": #selector(NSText.cut(_:))
+        case "c": #selector(NSText.copy(_:))
+        case "v": #selector(NSText.paste(_:))
+        case "a": #selector(NSText.selectAll(_:))
+        case "z": mods.contains(.shift) ? Selector(("redo:")) : Selector(("undo:"))
+        default: nil
+        }
+        if let action, NSApp.sendAction(action, to: nil, from: self) { return true }
+        return super.performKeyEquivalent(with: e)
+    }
 }

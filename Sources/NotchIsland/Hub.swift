@@ -1,10 +1,16 @@
 import AppKit
+import Carbon.HIToolbox
 
 // MARK: - Hub: what every island shares, and one island per display
 
 final class Hub: NSObject {
     let nowPlaying = NowPlaying(), meetings = Meetings(), net = NetSpeed()
     let downloads = Downloads(), focus = FocusTimer()
+    // Snapshot runs get an empty, throwaway planner so they never touch your tasks
+    let planner = Planner(dir: CommandLine.arguments.contains("--snapshot")
+        ? FileManager.default.temporaryDirectory.appendingPathComponent("NotchIsland-snapshot-\(UUID())")
+        : FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Notch Island"))
+    var alerting: Todo?  // the task whose time has come, until you snooze it or tick it off
     var power = readPower()
     var files: [URL] = []
     var islands: [IslandController] = []
@@ -38,6 +44,12 @@ final class Hub: NSObject {
             self.addFiles([url])
             self.islands.forEach { $0.mascot.cheer() }
         }
+        planner.onChange = { [unowned self] in
+            // Ticked off or deleted from the list while its alert was up
+            if let a = self.alerting, self.planner.todo(a.id)?.done != false { self.endAlert() }
+            self.islands.forEach { $0.expanded.today.reload() }
+        }
+        registerHotKey()
 
         layoutIslands()
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil,
@@ -84,6 +96,44 @@ final class Hub: NSObject {
         settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
+    // MARK: Tasks
+
+    /// ⌥N from anywhere opens the island under the cursor with the task box ready.
+    /// TODO: ⌥N types "˜" (for ñ) on some layouts; make the shortcut changeable in Settings
+    private func registerHotKey() {
+        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        InstallEventHandler(GetApplicationEventTarget(), { _, _, me in
+            let hub = Unmanaged<Hub>.fromOpaque(me!).takeUnretainedValue()
+            DispatchQueue.main.async { hub.quickAdd() }
+            return noErr
+        }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), nil)
+        var ref: EventHotKeyRef?
+        RegisterEventHotKey(UInt32(kVK_ANSI_N), UInt32(optionKey), EventHotKeyID(signature: 0x4E49_534C, id: 1),  // "NISL"
+                            GetApplicationEventTarget(), 0, &ref)
+    }
+
+    func quickAdd() {
+        let p = NSEvent.mouseLocation
+        (islands.first { $0.screenFrame.contains(p) } ?? islands.first)?.openForTyping()
+    }
+
+    func snoozeAlert() {
+        guard let a = alerting else { return }
+        endAlert()
+        planner.snooze(a.id)
+    }
+
+    func completeAlert() {
+        guard let a = alerting else { return }
+        planner.setDone(a.id, true)  // ends the alert via onChange
+        islands.forEach { $0.mascot.cheer() }
+    }
+
+    private func endAlert() {
+        alerting = nil
+        islands.forEach { $0.alertEnded() }
+    }
+
     // MARK: Mouse
 
     func globalMouse(_ e: NSEvent) {
@@ -112,6 +162,12 @@ final class Hub: NSObject {
         let p = readPower(), pluggedIn = p.plugged && !power.plugged, powerChanged = p != power
         power = p
         if n % 30 == 0 { meetings.refresh() }
+        if planner.rollOver() { islands.forEach { $0.expanded.willOpen() } }  // midnight: a new day's list and note
+        if alerting == nil, let t = planner.nextAlert() {
+            alerting = t
+            NSSound(named: "Hero")?.play()
+            islands.forEach { $0.showAlert() }
+        }
         // Heads-up 5 minutes before a meeting, once per event
         var meetingSoon = false
         if Pref.showMeetings.isOn, let e = meetings.next, let id = e.eventIdentifier, id != flashedMeeting,
@@ -131,6 +187,7 @@ final class Hub: NSObject {
             if pluggedIn { i.flash(.charging, 3.5); i.mascot.pluggedIn() }
             i.mascot.tired = p.hasBattery && !p.plugged && p.level < 20
             if n % 30 != 0 { i.showMeeting() }
+            if n % 30 == 0, i.mode == .expanded { i.expanded.today.reload() }  // tasks turn overdue as time passes
             if meetingSoon { i.flash(.meeting, 8); i.mascot.meetingSoon() }
         }
     }

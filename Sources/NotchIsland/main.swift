@@ -5,6 +5,7 @@ import AppKit
 // MARK: - Main
 
 signal(SIGPIPE, SIG_IGN)  // the now-playing helper can exit any time; writing to it must not kill us
+if CommandLine.arguments.contains("--selftest") { Planner.selfTest(); exit(0) }  // checks date reading and rollover
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
 let hub = Hub()
@@ -15,6 +16,15 @@ if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLi
     let controller = hub.islands.first(where: \.hasNotch) ?? hub.islands[0]
     hub.frozen = true
     hub.islands.forEach { $0.mascot.freeze() }
+    // Some tasks and a note (the snapshot planner is a throwaway one), one of them already overdue
+    let p = hub.planner, today = dayKey(Date())
+    p.add("Call the bank about the card", on: today).map { p.remind($0.id, at: Date().addingTimeInterval(-50 * 60)) }
+    _ = p.nextAlert()  // rung already, so it doesn't pop up mid-run
+    p.add("Prep slides for design review", on: today).map { p.remind($0.id, at: Date().addingTimeInterval(40 * 60)) }
+    p.add("Pay electricity bill", on: today).map { p.remind($0.id, at: Date().addingTimeInterval(3 * 3600)) }
+    p.add("Gym", on: today)
+    p.add("Reply to Sam’s email", on: today).map { p.setDone($0.id, true) }
+    p.setNote("Lead the review with the notch demo\nWeekly recap every Friday?\nEmail Sam about the API friday", today)
     Task { @MainActor in
         try? await Task.sleep(for: .seconds(2))  // let now playing and the calendar arrive
         let shots: [(String, IslandController.Mode)] = [("1-music", .music), ("2-peek", .peek), ("3-charging", .charging),
@@ -24,6 +34,23 @@ if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLi
             try? await Task.sleep(for: .seconds(1.2))
             controller.snapshot(dir.appendingPathComponent("\(name).png"))
         }
+        // Typing a task: the line above the box says what will be saved
+        let today = controller.expanded.today
+        today.field.stringValue = "Call mom tomorrow at 5pm"
+        today.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        try? await Task.sleep(for: .seconds(0.4))
+        controller.snapshot(dir.appendingPathComponent("5b-typing.png"))
+        today.field.stringValue = ""
+        today.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
+        // A task comes due
+        hub.alerting = p.list(dayKey(Date())).todo.first { $0.title.hasPrefix("Prep") }
+        controller.collapse()
+        try? await Task.sleep(for: .seconds(1.2))
+        controller.snapshot(dir.appendingPathComponent("5c-alert.png"))
+        hub.alerting = nil
+        controller.alertEnded()
+        controller.expand()
+        try? await Task.sleep(for: .seconds(1))
         controller.addFiles(["/System/Applications/Music.app", "/System/Applications/Calculator.app", "/etc/hosts"].map(URL.init(fileURLWithPath:)))
         try? await Task.sleep(for: .seconds(1))
         controller.snapshot(dir.appendingPathComponent("6-shelf.png"))

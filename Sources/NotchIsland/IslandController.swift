@@ -3,15 +3,15 @@ import AppKit
 // MARK: - IslandController: the island on one display
 
 final class IslandController {
-    enum Mode { case idle, music, focus, download, peek, charging, meeting, expanded }
-    static let win = NSSize(width: 760, height: 330)
+    enum Mode { case idle, music, focus, download, peek, charging, meeting, alert, expanded }
+    static let win = NSSize(width: 1000, height: 460)
 
     unowned let hub: Hub
     let screenFrame: CGRect, hasNotch: Bool
     let notchW: CGFloat, notchH: CGFloat
     let panel: IslandPanel
     let root = RootView(frame: NSRect(origin: .zero, size: IslandController.win))
-    let bg = CAShapeLayer(), glow = CAGradientLayer(), glowMask = CAShapeLayer()
+    let bg = CAShapeLayer()
     var expanded: ExpandedView!
     let mascot = Mascot()
     var mode = Mode.idle
@@ -20,6 +20,7 @@ final class IslandController {
     var downloadEar: (ring: RingView, percent: NSTextField)?
     var revert, expandWork, collapseWork, poll: Task<Void, Never>?
     var gen = 0
+    var keyObserver: NSObjectProtocol?
     var shelfShown = false
     // Shared by every display's island
     var nowPlaying: NowPlaying { hub.nowPlaying }
@@ -33,9 +34,10 @@ final class IslandController {
     func removeFiles(_ urls: [URL]) { hub.removeFiles(urls) }
     var wantsShelf: Bool { hub.fileDrag || expanded.dragging || !files.isEmpty }
     var playing: Bool { nowPlaying.track?.playing ?? false }
-    /// What the island shows at rest: the focus countdown, download progress, ears while music plays or
-    /// files are held, otherwise nothing (hidden in the notch).
+    /// What the island shows at rest: a task that's come due, the focus countdown, download progress, ears while
+    /// music plays or files are held, otherwise nothing (hidden in the notch).
     var base: Mode {
+        if hub.alerting != nil { return .alert }
         if focus.running { return .focus }
         if downloads.count > 0 { return .download }
         return playing || !files.isEmpty ? .music : .idle
@@ -70,11 +72,9 @@ final class IslandController {
         panel.contentView = root
         root.wantsLayer = true
         let p = path(.idle)
-        bg.path = p; bg.shadowPath = p; glowMask.path = p
+        bg.path = p; bg.shadowPath = p
         bg.fillColor = NSColor.black.cgColor
         bg.shadowColor = NSColor.black.cgColor; bg.shadowRadius = 20; bg.shadowOffset = CGSize(width: 0, height: -8); bg.shadowOpacity = 0
-        glow.type = .radial; glow.frame = root.bounds; glow.mask = glowMask; glow.opacity = 0
-        root.layer!.insertSublayer(glow, at: 0)
         root.layer!.insertSublayer(bg, at: 0)
         // The robot sits under the island's layers, so a growing island simply covers it
         mascot.topY = top
@@ -94,13 +94,19 @@ final class IslandController {
             if self.expanded.isOverAirDrop(point) { ShelfAction.airDrop(urls) } else { self.addFiles(urls) }
         }
         root.menu = hub.menu
+        panel.onEscape = { [weak self] in if self?.mode == .expanded { self?.collapse() } }
+        // Typing in the island and then clicking into another app: close up behind you
+        keyObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: panel, queue: .main) {
+            [weak self] _ in
+            guard let self, self.mode == .expanded, !self.hot(.expanded).contains(NSEvent.mouseLocation) else { return }
+            self.collapse()
+        }
 
         expanded.show(nowPlaying.track)
         expanded.showPower(power)
         expanded.showShelf(files)
         expanded.showFocus(focus)
         showMeeting()
-        tintGlow()
         panel.orderFrontRegardless()
         mascot.start()
         updateMascotMood()
@@ -110,6 +116,7 @@ final class IslandController {
     /// The display went away or changed: stop everything that would outlive the island.
     func close() {
         [revert, expandWork, collapseWork, poll].forEach { $0?.cancel() }
+        keyObserver.map(NotificationCenter.default.removeObserver)
         mascot.freeze()
         panel.orderOut(nil)
     }
@@ -154,7 +161,8 @@ final class IslandController {
         case .charging: return (notchW + 2 * 104, notchH, 10, 6)
         case .meeting: return (notchW + 2 * 110, notchH, 10, 6)
         case .peek: return (notchW + 2 * 100, notchH + 52, 22, 8)
-        case .expanded: return (ExpandedView.width, shelfShown ? ExpandedView.fullHeight : ExpandedView.playerHeight, 30, 12)
+        case .alert: return (420, notchH + 80, 24, 8)
+        case .expanded: return (ExpandedView.width, shelfShown ? ExpandedView.fullHeight : ExpandedView.shortHeight, 30, 12)
         }
     }
     func rect(_ m: Mode) -> CGRect {
@@ -175,7 +183,7 @@ final class IslandController {
     /// Morph the island to `m`'s shape: bounce when growing, settle without overshoot when shrinking.
     func reshape(to m: Mode, growing: Bool) {
         let p = path(m), b: CGFloat = growing ? 0.22 : 0
-        animate(bg, "path", to: p, bounce: b); animate(bg, "shadowPath", to: p, bounce: b); animate(glowMask, "path", to: p, bounce: b)
+        animate(bg, "path", to: p, bounce: b); animate(bg, "shadowPath", to: p, bounce: b)
     }
 
     // MARK: Modes
@@ -185,10 +193,12 @@ final class IslandController {
         let was = mode, s0 = spec(was), s1 = spec(m)
         mode = m
         if resting(m) { mascot.setWorld(restingRect(m)) }
-        let open = m == .expanded
+        let open = m == .expanded, live = open || m == .alert
         reshape(to: m, growing: s1.w * s1.h > s0.w * s0.h)
-        animate(bg, "shadowOpacity", to: Float(open ? 0.6 : 0), spring: false)
-        animate(glow, "opacity", to: Float(open ? 1 : 0), spring: false)
+        animate(bg, "shadowOpacity", to: Float(live ? 0.6 : 0), spring: false)
+        // Clickable only where the island is (the poll keeps this up to date), so the menu bar around it still works
+        panel.ignoresMouseEvents = !(live && hot(m).contains(NSEvent.mouseLocation))
+        setPolling(live)
 
         for v in collapsedViews {
             fade(v, to: 0, duration: 0.1)
@@ -207,6 +217,7 @@ final class IslandController {
         if open {
             // The robot hops inside to ride the progress bar
             mascot.pause()
+            expanded.willOpen()
             expanded.rider.setActive(true)
             expanded.rider.update(nowPlaying.track)
             expanded.isHidden = false
@@ -233,6 +244,10 @@ final class IslandController {
         switch m {
         case .idle, .expanded:
             return []
+        case .alert:
+            guard let t = hub.alerting else { return [] }
+            return alertViews(t, in: r, snooze: { [unowned self] in self.hub.snoozeAlert() },
+                              done: { [unowned self] in self.hub.completeAlert() })
         case .music:
             if let t = nowPlaying.track, t.playing {
                 let art = artView(t.artwork, NSRect(x: r.minX + 11, y: cy - 10, width: 20, height: 20), radius: 5)
@@ -310,19 +325,10 @@ final class IslandController {
 
     /// Shows a collapsed state for a few seconds, then falls back to `base`.
     func flash(_ m: Mode, _ seconds: Double) {
-        guard mode != .expanded else { return }
+        guard mode != .expanded, mode != .alert else { return }
         setMode(m, force: true)
         revert?.cancel()
         revert = after(seconds) { [unowned self] in if self.mode == m { self.setMode(self.base) } }
-    }
-
-    func tintGlow() {
-        let a = nowPlaying.track?.accent ?? .clear, r = rect(.expanded), W = Self.win.width, H = Self.win.height
-        glow.colors = [a.withAlphaComponent(0.4).cgColor, a.withAlphaComponent(0.1).cgColor, a.withAlphaComponent(0).cgColor]
-        glow.locations = [0, 0.45, 1]
-        let c = CGPoint(x: (r.minX + 70) / W, y: (r.maxY - 90) / H)  // centred on the album art
-        glow.startPoint = c
-        glow.endPoint = CGPoint(x: c.x + 340 / W, y: c.y + 230 / H)
     }
 
     // MARK: Mouse
@@ -330,8 +336,11 @@ final class IslandController {
     func trackMouse() {
         guard !frozen else { return }
         let p = NSEvent.mouseLocation
+        if mode == .expanded || mode == .alert { panel.ignoresMouseEvents = !hot(mode).contains(p) }
+        if mode == .alert { return }  // it stays until you snooze it or tick it off
         if mode == .expanded {
-            if hot(.expanded).contains(p) { collapseWork?.cancel(); collapseWork = nil }
+            // While you're typing in it, it stays open wherever the cursor goes; Esc or a click elsewhere closes it
+            if hot(.expanded).contains(p) || panel.isKeyWindow { collapseWork?.cancel(); collapseWork = nil }
             else if collapseWork == nil { collapseWork = after(0.25) { [unowned self] in self.collapse() } }
         } else if hot(mode).contains(p) {
             if hub.fileDrag { expand() }
@@ -354,9 +363,34 @@ final class IslandController {
         expanded.showShelf(files)
         shelfShown = wantsShelf
         expanded.setShelfRow(shelfShown, animated: false)
-        panel.ignoresMouseEvents = false
         setMode(.expanded)
-        // REVIEW: our own window gets no global mouse events, so the cursor is polled at 30 Hz while open (stops on collapse)
+    }
+
+    /// ⌥N: open with the cursor in the task box.
+    func openForTyping() {
+        expand()
+        expanded.today.focusField()
+    }
+
+    func collapse() {
+        collapseWork = nil
+        expanded.note.flush()
+        expanded.setDragging(nil)
+        setMode(base)
+        if panel.isKeyWindow {
+            // Hand the keyboard back to the app you were in: ordering the panel out and straight back in does it
+            panel.makeFirstResponder(nil)
+            panel.orderOut(nil)
+            panel.orderFrontRegardless()
+        }
+    }
+
+    /// REVIEW: our own window gets no global mouse events, so while the island is open (or showing an alert) the
+    /// cursor is polled at 30 Hz to know when it leaves
+    func setPolling(_ on: Bool) {
+        guard on != (poll != nil) else { return }
+        poll?.cancel(); poll = nil
+        guard on else { return }
         poll = Task { @MainActor [unowned self] in
             while !Task.isCancelled {
                 self.trackMouse()
@@ -365,13 +399,10 @@ final class IslandController {
         }
     }
 
-    func collapse() {
-        collapseWork = nil
-        poll?.cancel(); poll = nil
-        panel.ignoresMouseEvents = true
-        expanded.setDragging(nil)
-        setMode(base)
-    }
+    // MARK: Tasks
+
+    func showAlert() { if mode != .expanded { setMode(.alert, force: true) } }
+    func alertEnded() { if mode == .alert { setMode(base) } }
 
     /// While open, grows the island to reveal the shelf row (or shrinks it away) when the need changes.
     func refreshShelf() {
@@ -386,7 +417,6 @@ final class IslandController {
     func trackChanged(_ isNew: Bool) {
         let t = nowPlaying.track
         expanded.show(t)
-        tintGlow()
         updateMascotMood()
         for v in liveArt where v.image !== t?.artwork {  // artwork often lands a beat after the title
             v.layer?.add(CATransition(), forKey: "swap")
