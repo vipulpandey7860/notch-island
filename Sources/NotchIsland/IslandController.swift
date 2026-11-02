@@ -3,7 +3,7 @@ import AppKit
 // MARK: - IslandController: the island on one display
 
 final class IslandController {
-    enum Mode { case idle, music, focus, download, peek, charging, meeting, alert, expanded }
+    enum Mode { case idle, music, focus, timer, agent, download, peek, note, charging, meeting, alert, expanded }
     static let win = NSSize(width: 1000, height: 460)
 
     unowned let hub: Hub
@@ -16,7 +16,8 @@ final class IslandController {
     let mascot = Mascot()
     var mode = Mode.idle
     var collapsedViews: [NSView] = [], liveArt: [NSImageView] = []
-    var focusEar: NSTextField?                               // the countdown beside the notch
+    var focusEar: NSTextField?, timerEar: NSTextField?, agentEar: NSTextField?  // the clocks beside the notch
+    var noteContent: (icon: String, color: NSColor, title: String, detail: String)?
     var downloadEar: (ring: RingView, percent: NSTextField)?
     var revert, expandWork, collapseWork, poll: Task<Void, Never>?
     var gen = 0
@@ -34,16 +35,18 @@ final class IslandController {
     func removeFiles(_ urls: [URL]) { hub.removeFiles(urls) }
     var wantsShelf: Bool { hub.fileDrag || expanded.dragging || !files.isEmpty }
     var playing: Bool { nowPlaying.track?.playing ?? false }
-    /// What the island shows at rest: a task that's come due, the focus countdown, download progress, ears while
-    /// music plays or files are held, otherwise nothing (hidden in the notch).
+    /// What the island shows at rest: something waiting for an answer, a timer, the focus countdown, download
+    /// progress, ears while music plays or files are held, otherwise nothing (hidden in the notch).
     var base: Mode {
         if hub.alerting != nil { return .alert }
+        if hub.timers.next != nil { return .timer }
         if focus.running { return .focus }
+        if !hub.agents.sessions.isEmpty { return .agent }
         if downloads.count > 0 { return .download }
         return playing || !files.isEmpty ? .music : .idle
     }
     /// The collapsed states the island rests in, as opposed to brief heads-ups.
-    func resting(_ m: Mode) -> Bool { [.idle, .music, .focus, .download].contains(m) }
+    func resting(_ m: Mode) -> Bool { [.idle, .music, .focus, .timer, .agent, .download].contains(m) }
 
     var cx: CGFloat { Self.win.width / 2 }
     var top: CGFloat { Self.win.height }
@@ -105,7 +108,7 @@ final class IslandController {
         expanded.show(nowPlaying.track)
         expanded.showPower(power)
         expanded.showShelf(files)
-        expanded.showFocus(focus)
+        expanded.showCountdowns()
         showMeeting()
         panel.orderFrontRegardless()
         mascot.start()
@@ -123,7 +126,7 @@ final class IslandController {
 
     func updateMascotMood() {
         let mood: Mascot.Mood
-        if focus.phase == .focus { mood = .work }
+        if focus.phase == .focus || !hub.agents.sessions.isEmpty { mood = .work }  // at its desk while you or an agent works
         else if playing { mood = .party }
         else if files.isEmpty && downloads.count == 0 && !focus.running { mood = .asleep }
         else { mood = .calm }
@@ -132,8 +135,24 @@ final class IslandController {
 
     // MARK: Focus and settings
 
+    func agentsChanged() {
+        updateMascotMood()
+        if resting(mode) { setMode(base, force: true) }  // a new session, or one now waiting for you
+    }
+
+    /// A short heads-up that needs no answer, like "Claude finished".
+    func note(_ icon: String, _ color: NSColor, _ title: String, _ detail: String) {
+        noteContent = (icon, color, title, detail)
+        flash(.note, 4)
+    }
+
+    func timersChanged() {
+        expanded.showCountdowns()
+        if resting(mode) { setMode(base, force: true) }
+    }
+
     func focusChanged() {
-        expanded.showFocus(focus)
+        expanded.showCountdowns()
         updateMascotMood()
         if resting(mode) { setMode(base, force: true) }  // new phase: new ear colours, or the timer's gone
     }
@@ -145,8 +164,8 @@ final class IslandController {
             expanded.rider.isHidden = !p.isOn
             if p.isOn, mode == .expanded { mascot.pause() }  // it's riding the bar right now
         case .showMeetings: showMeeting()
-        case .showNetSpeed: expanded.showFocus(focus)
-        case .clearShelfAfterDrag: break  // read when a drag out ends
+        case .showNetSpeed: expanded.showCountdowns()
+        case .clearShelfAfterDrag, .keepClips, .checkForUpdates: break  // read when they're needed
         }
     }
 
@@ -157,10 +176,12 @@ final class IslandController {
         case .idle: return (notchW - 8, notchH - 4, 8, 0)  // tucked behind the hardware notch
         case .music: return (notchW + 2 * (playing && !files.isEmpty ? 64 : 40), notchH, 10, 6)
         case .focus: return (notchW + 2 * 80, notchH, 10, 6)
+        case .timer: return (notchW + 2 * 90, notchH, 10, 6)
+        case .agent: return (notchW + 2 * 96, notchH, 10, 6)
         case .download: return (notchW + 2 * 56, notchH, 10, 6)
         case .charging: return (notchW + 2 * 104, notchH, 10, 6)
         case .meeting: return (notchW + 2 * 110, notchH, 10, 6)
-        case .peek: return (notchW + 2 * 100, notchH + 52, 22, 8)
+        case .peek, .note: return (notchW + 2 * 100, notchH + 52, 22, 8)
         case .alert: return (420, notchH + 80, 24, 8)
         case .expanded: return (ExpandedView.width, shelfShown ? ExpandedView.fullHeight : ExpandedView.shortHeight, 30, 12)
         }
@@ -204,7 +225,7 @@ final class IslandController {
             fade(v, to: 0, duration: 0.1)
             after(0.15) { v.removeFromSuperview() }
         }
-        liveArt = []; focusEar = nil; downloadEar = nil
+        liveArt = []; focusEar = nil; timerEar = nil; agentEar = nil; downloadEar = nil
         collapsedViews = collapsedContent(m)
         for v in collapsedViews {
             v.alphaValue = 0
@@ -245,9 +266,8 @@ final class IslandController {
         case .idle, .expanded:
             return []
         case .alert:
-            guard let t = hub.alerting else { return [] }
-            return alertViews(t, in: r, snooze: { [unowned self] in self.hub.snoozeAlert() },
-                              done: { [unowned self] in self.hub.completeAlert() })
+            guard let h = hub.alerting else { return [] }
+            return alertViews(h, in: r)
         case .music:
             if let t = nowPlaying.track, t.playing {
                 let art = artView(t.artwork, NSRect(x: r.minX + 11, y: cy - 10, width: 20, height: 20), radius: 5)
@@ -272,6 +292,38 @@ final class IslandController {
             put(countdown, r.maxX - 66, cy, 52, align: .right)
             focusEar = countdown
             return [icon, name, countdown]
+        case .timer:
+            guard let t = hub.timers.next else { return [] }
+            let icon = NSImageView(image: sym("timer", 11))
+            icon.contentTintColor = .systemTeal
+            icon.frame = NSRect(x: r.minX + 12, y: cy - 7, width: 15, height: 14)
+            let more = hub.timers.items.count > 1 ? " +\(hub.timers.items.count - 1)" : ""
+            let name = label(t.label + more, 12, .semibold); put(name, r.minX + 31, cy, 80)
+            let countdown = label(fmt(t.ends.timeIntervalSinceNow), 12, .semibold, .systemTeal, mono: true)
+            put(countdown, r.maxX - 66, cy, 52, align: .right)
+            timerEar = countdown
+            return [icon, name, countdown]
+        case .agent:
+            guard let s = hub.agents.longest else { return [] }
+            let n = hub.agents.sessions.count, waiting = hub.agents.sessions.values.contains { $0.waiting }
+            let icon = NSImageView(image: sym("sparkle", 11))
+            icon.contentTintColor = .systemOrange
+            icon.frame = NSRect(x: r.minX + 12, y: cy - 7, width: 15, height: 14)
+            let name = label(n > 1 ? "\(n) agents" : s.project, 12, .semibold); put(name, r.minX + 31, cy, 90)
+            let right = label(waiting ? "Needs you" : fmt(Date().timeIntervalSince(s.since)), 12, .semibold,
+                              waiting ? .systemOrange : white(0.7), mono: !waiting)
+            put(right, r.maxX - 86, cy, 72, align: .right)
+            agentEar = waiting ? nil : right
+            return [icon, name, right]
+        case .note:
+            guard let n = noteContent else { return [] }
+            let icon = NSImageView(image: sym(n.icon, 24, .medium))
+            icon.contentTintColor = n.color
+            icon.frame = NSRect(x: r.minX + 16, y: r.minY + 9, width: 36, height: 36)
+            let x = icon.frame.maxX + 10, w = r.maxX - 16 - x
+            let ti = label(n.title, 13, .semibold); put(ti, x, r.minY + 35, w)
+            let de = label(n.detail, 11, .regular, white(0.55)); put(de, x, r.minY + 18, w)
+            return [icon, ti, de]
         case .download:
             let ring = RingView(frame: NSRect(x: r.minX + 12, y: cy - 9, width: 18, height: 18), symbol: "arrow.down", color: .systemBlue)
             let percent = label("", 12, .semibold, white(0.9), mono: true)
@@ -317,6 +369,8 @@ final class IslandController {
 
     func updateEars() {
         focusEar?.stringValue = fmt(focus.remaining)
+        if let t = hub.timers.next { timerEar?.stringValue = fmt(max(0, t.ends.timeIntervalSinceNow)) }
+        if let s = hub.agents.longest { agentEar?.stringValue = fmt(Date().timeIntervalSince(s.since)) }
         if let ear = downloadEar {
             ear.ring.fraction = CGFloat(downloads.fraction)
             ear.percent.stringValue = "\(Int(downloads.fraction * 100))%"

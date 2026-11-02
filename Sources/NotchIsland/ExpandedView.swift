@@ -37,6 +37,7 @@ final class ExpandedView: FlippedView {
     let airDrop = DropZoneView(frame: NSRect(x: 712, y: 34, width: 144, height: 62), symbol: "dot.radiowaves.left.and.right",
                                idle: "AirDrop", ready: "Send via AirDrop")
     let focusPill = PillButton("25:00", symbol: "timer", color: .systemOrange, width: 74)
+    let timerPill = PillButton("0:00", symbol: "timer", color: .systemTeal, width: 74)
     private var more: IconButton!
     private var play: IconButton!
     private var swipe: CGFloat = 0, swiped = false
@@ -47,7 +48,7 @@ final class ExpandedView: FlippedView {
     init(frame: NSRect, c: IslandController) {
         self.c = c
         today = TodayCard(frame: NSRect(x: 14, y: 40, width: 398, height: 250), planner: c.hub.planner)
-        note = NoteCard(frame: NSRect(x: 422, y: 40, width: 227, height: 250), planner: c.hub.planner)
+        note = NoteCard(frame: NSRect(x: 422, y: 40, width: 227, height: 250), planner: c.hub.planner, clips: c.hub.clips)
         super.init(frame: frame)
         let w = frame.width
         today.onEscape = { c.collapse() }
@@ -69,6 +70,9 @@ final class ExpandedView: FlippedView {
         focusPill.isHidden = true
         focusPill.toolTip = "Stop the focus timer"
         focusPill.action = { c.focus.stop() }
+        timerPill.isHidden = true
+        timerPill.action = { if let t = c.hub.timers.next { c.hub.timers.stop(t.id) } }
+        today.onTimer = { c.hub.timers.start($0, seconds: $1) }
 
         // Player card: art and titles, controls, then the progress bar (kept clear above for the robot)
         styleCard(player)
@@ -108,7 +112,7 @@ final class ExpandedView: FlippedView {
         ([shelfTitle, more, dragAll, grid, drop, airDrop] as [NSView]).forEach(shelfRow.addSubview)
         shelfRow.alphaValue = 0; shelfRow.isHidden = true
 
-        ([cal, meeting, join, pct, batt, net, focusPill, today, note, player, shelfRow] as [NSView]).forEach(addSubview)
+        ([cal, meeting, join, pct, batt, net, focusPill, timerPill, today, note, player, shelfRow] as [NSView]).forEach(addSubview)
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -222,13 +226,21 @@ final class ExpandedView: FlippedView {
         return m
     }
 
-    /// The focus countdown replaces the network speed while the timer runs.
-    func showFocus(_ timer: FocusTimer) {
-        focusPill.isHidden = !timer.running
-        net.isHidden = timer.running || !Pref.showNetSpeed.isOn
-        guard let phase = timer.phase else { return }
-        focusPill.setTitle(fmt(timer.remaining))
-        focusPill.setColor(phase == .focus ? .systemOrange : .systemGreen)
+    /// The focus countdown and the soonest timer replace the network speed while they run; click one to stop it.
+    func showCountdowns() {
+        let focus = c.focus, t = c.hub.timers.next
+        focusPill.isHidden = !focus.running
+        timerPill.isHidden = t == nil
+        net.isHidden = focus.running || t != nil || !Pref.showNetSpeed.isOn
+        if let phase = focus.phase {
+            focusPill.setTitle(fmt(focus.remaining))
+            focusPill.setColor(phase == .focus ? .systemOrange : .systemGreen)
+        }
+        if let t {
+            timerPill.setTitle(fmt(max(0, t.ends.timeIntervalSinceNow)))
+            timerPill.toolTip = "\(t.label): click to stop"
+            timerPill.frame.origin.x = focus.running ? focusPill.frame.minX - 8 - timerPill.frame.width : focusPill.frame.minX
+        }
     }
 
     /// Two-finger swipe across the player card: left for the next track, right for the previous.

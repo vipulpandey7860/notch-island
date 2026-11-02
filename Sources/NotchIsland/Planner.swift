@@ -206,6 +206,25 @@ struct Parse {
     }
 }
 
+extension Parse {
+    private static let timerPattern = try! NSRegularExpression(
+        pattern: #"^\s*(.*?)\s*(?:for\s+)?(\d{1,3})\s*(s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?)\s*$"#, options: .caseInsensitive)
+
+    /// "tea 4 min" is a 4-minute timer called "tea". "call mom in 20 min" isn't: that's a task with a reminder.
+    static func timer(_ text: String) -> (label: String, seconds: Double)? {
+        let s = text as NSString
+        guard let m = timerPattern.firstMatch(in: text, range: NSRange(location: 0, length: s.length)) else { return nil }
+        var words = s.substring(with: m.range(at: 1)).split(separator: " ").map(String.init)
+        if words.last?.lowercased() == "in" { return nil }
+        if words.first?.lowercased() == "timer" { words.removeFirst() }
+        let n = Double(s.substring(with: m.range(at: 2)))!, unit = s.substring(with: m.range(at: 3)).lowercased()
+        let seconds = n * (unit.hasPrefix("h") ? 3600 : unit.hasPrefix("m") ? 60 : 1)
+        guard seconds > 0, seconds <= 24 * 3600 else { return nil }
+        let label = words.joined(separator: " ")
+        return (label.isEmpty ? "Timer" : label.prefix(1).uppercased() + label.dropFirst(), seconds)
+    }
+}
+
 // MARK: - Self-check: `NotchIsland --selftest`
 
 extension Planner {
@@ -225,6 +244,10 @@ extension Planner {
         precondition(p.title == "call bank" && day(p.due) == 1 && cal.component(.hour, from: p.due!) == 13, "\(p)")  // 1pm has gone
         p = Parse("read 20 pages")
         precondition(p.title == "read 20 pages" && p.day == nil && p.due == nil, "\(p)")
+        precondition(Parse.timer("tea 4 min")! == ("Tea", 240), "timer")
+        precondition(Parse.timer("timer 90s")! == ("Timer", 90) && Parse.timer("pasta for 1 hour")! == ("Pasta", 3600), "timer")
+        precondition(Parse.timer("call mom in 20 min") == nil && Parse.timer("read 20 pages") == nil, "not timers")
+        precondition(durationText(240) == "4 min" && durationText(5400) == "1 h 30 min", "durations")
 
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("NotchIsland-selftest-\(UUID())")
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -240,6 +263,7 @@ extension Planner {
         precondition(pl.nextAlert(now: now.addingTimeInterval(61))?.id == soon.id, "rings when due")
         precondition(pl.nextAlert(now: now.addingTimeInterval(62)) == nil, "rings once")
         precondition(Planner(dir: dir).todos == pl.todos, "saved and read back")
+        Agents.selfTest(in: dir)
         print("selftest ok")
     }
 }

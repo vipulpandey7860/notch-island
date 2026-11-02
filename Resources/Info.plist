@@ -5,7 +5,7 @@
 	<key>CFBundleExecutable</key>
 	<string>NotchIsland</string>
 	<key>CFBundleIdentifier</key>
-	<string>dev.mactools.notchisland</string>
+	<string>io.github.vipulpandey7860.notchisland</string>
 	<key>CFBundleName</key>
 	<string>Notch Island</string>
 	<key>CFBundlePackageType</key>

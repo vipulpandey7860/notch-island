@@ -73,6 +73,7 @@ func inputField(_ placeholder: String, _ size: CGFloat, _ weight: NSFont.Weight 
 final class TodayCard: FlippedView, NSTextFieldDelegate {
     let field = inputField("Add a task…   try “call mom tomorrow 5pm”", 13)
     var onEscape: () -> Void = {}
+    var onTimer: (String, Double) -> Void = { _, _ in }  // "tea 4 min"
     private unowned let planner: Planner
     private var offset = 0, showDone = false, showOffset = 0, listHeight: CGFloat = 0
     private let heading = label("Today", 14, .semibold)
@@ -98,7 +99,7 @@ final class TodayCard: FlippedView, NSTextFieldDelegate {
         // Header: the day, To do | Done, then ‹ date › on the right
         put(heading, 14, 24, 120)
         tabs.frame.origin.y = 13
-        tabs.onPick = { [unowned self] done in self.showDone = done; self.reload() }
+        tabs.onPick = { [unowned self] i in self.showDone = i == 1; self.reload() }
         prev = IconButton("chevron.left", size: 22, point: 11, label: "Previous day") { [unowned self] in self.go(self.offset - 1) }
         next = IconButton("chevron.right", size: 22, point: 11, label: "Next day") { [unowned self] in self.go(self.offset + 1) }
         back = IconButton("arrow.uturn.backward", size: 22, point: 11, label: "Back to today") { [unowned self] in self.go(0) }
@@ -170,7 +171,7 @@ final class TodayCard: FlippedView, NSTextFieldDelegate {
     private func layoutHeader(todo: Int, done: Int) {
         heading.stringValue = dayName(offset)
         heading.frame.size.width = ceil(heading.fittingSize.width)
-        tabs.set(todo: todo, done: done, showingDone: showDone)
+        tabs.set([("To do", todo), ("Done", done)], selected: showDone ? 1 : 0)
         tabs.frame.origin.x = heading.frame.maxX + 10
         // The heading names the day already; the date only needs adding for the days that go by name
         let named = (-1...6).contains(offset)
@@ -239,6 +240,7 @@ final class TodayCard: FlippedView, NSTextFieldDelegate {
             }
         }
         guard !s.trimmingCharacters(in: .whitespaces).isEmpty else { setHint(nil); return }
+        if let t = Parse.timer(s) { setHint("timer", t.label, "\(durationText(t.seconds)) timer", key: "↩ start  ·  esc clear"); return }
         let off = p.day.map { dayOffset(dayKey($0)) } ?? offset
         setHint(p.due == nil ? "calendar" : "bell.fill", p.title.isEmpty ? "…" : p.title, whenText(off, p.due), key: "↩ add  ·  esc clear")
     }
@@ -277,7 +279,14 @@ final class TodayCard: FlippedView, NSTextFieldDelegate {
     func control(_ c: NSControl, textView: NSTextView, doCommandBy s: Selector) -> Bool {
         switch s {
         case #selector(insertNewline(_:)):
-            add(field.stringValue)
+            if let t = Parse.timer(field.stringValue) {
+                onTimer(t.label, t.seconds)
+                field.stringValue = ""; preview()
+                setHint("timer", "\(t.label) timer started", durationText(t.seconds))
+                toastWork = after(4) { [weak self] in self?.setHint(nil) }
+            } else {
+                add(field.stringValue)
+            }
             return true
         case #selector(cancelOperation(_:)):  // Esc clears the box, or closes the island once it's empty
             if field.stringValue.isEmpty { onEscape() } else { field.stringValue = ""; preview() }
@@ -288,10 +297,11 @@ final class TodayCard: FlippedView, NSTextFieldDelegate {
     }
 }
 
-/// "To do 3 | Done 1": which half of the day's list is on show.
+/// "To do 3 | Done 1", or "Notepad | Clips 4": which part of a card is on show.
 final class Tabs: NSView {
-    var onPick: (Bool) -> Void = { _ in }  // true for Done
-    private let a = NSTextField(labelWithString: ""), b = NSTextField(labelWithString: "")
+    var onPick: (Int) -> Void = { _ in }
+    private var labels: [NSTextField] = []
+    private var selected = 0
     private let knob = CALayer()
 
     init() {
@@ -299,33 +309,44 @@ final class Tabs: NSView {
         wantsLayer = true; layer!.cornerRadius = 8; layer!.backgroundColor = white(0.07).cgColor
         knob.cornerRadius = 6; knob.backgroundColor = white(0.15).cgColor
         layer!.addSublayer(knob)
-        addSubview(a); addSubview(b)
         setAccessibilityElement(true); setAccessibilityRole(.button)
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    func set(todo: Int, done: Int, showingDone: Bool) {
-        a.attributedStringValue = segment("To do", todo, on: !showingDone)
-        b.attributedStringValue = segment("Done", done, on: showingDone)
-        let aw = ceil(a.fittingSize.width) + 18, bw = ceil(b.fittingSize.width) + 18
-        put(a, 2, 11, aw, align: .center); put(b, 2 + aw, 11, bw, align: .center)
-        frame.size.width = aw + bw + 4
-        knob.frame = CGRect(x: showingDone ? 2 + aw : 2, y: 2, width: showingDone ? bw : aw, height: 18)  // slides across
-        setAccessibilityLabel(showingDone ? "Showing \(done) done. Show to do" : "Showing \(todo) to do. Show done")
+    func set(_ items: [(name: String, count: Int?)], selected: Int) {
+        self.selected = selected
+        while labels.count < items.count { let l = NSTextField(labelWithString: ""); labels.append(l); addSubview(l) }
+        var x: CGFloat = 2
+        for (i, item) in items.enumerated() {
+            let l = labels[i]
+            l.attributedStringValue = segment(item.name, item.count, on: i == selected)
+            let w = ceil(l.fittingSize.width) + 18
+            put(l, x, 11, w, align: .center)
+            if i == selected { knob.frame = CGRect(x: x, y: 2, width: w, height: 18) }  // slides across
+            x += w
+        }
+        frame.size.width = x + 2
+        let next = items[(selected + 1) % items.count].name
+        setAccessibilityLabel("Showing \(items[selected].name). Show \(next)")
     }
 
-    private func segment(_ name: String, _ n: Int, on: Bool) -> NSAttributedString {
+    private func segment(_ name: String, _ n: Int?, on: Bool) -> NSAttributedString {
         let s = NSMutableAttributedString(string: name, attributes: [.font: NSFont.systemFont(ofSize: 11.5, weight: .semibold),
                                                                      .foregroundColor: white(on ? 0.95 : 0.5)])
-        s.append(NSAttributedString(string: "  \(n)", attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .medium),
-                                                                  .foregroundColor: white(on ? 0.55 : 0.32)]))
+        if let n {
+            s.append(NSAttributedString(string: "  \(n)", attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 11.5, weight: .medium),
+                                                                      .foregroundColor: white(on ? 0.55 : 0.32)]))
+        }
         return s
     }
 
     override func hitTest(_ p: NSPoint) -> NSView? { frame.contains(p) ? self : nil }
     override func acceptsFirstMouse(for e: NSEvent?) -> Bool { true }
-    override func mouseDown(with e: NSEvent) { onPick(convert(e.locationInWindow, from: nil).x > b.frame.minX) }
-    override func accessibilityPerformPress() -> Bool { onPick(knob.frame.minX < b.frame.minX); return true }
+    override func mouseDown(with e: NSEvent) {
+        let x = convert(e.locationInWindow, from: nil).x
+        if let i = labels.firstIndex(where: { $0.frame.maxX > x }) { onPick(i) }
+    }
+    override func accessibilityPerformPress() -> Bool { onPick((selected + 1) % max(labels.count, 1)); return true }
 }
 
 // MARK: - A task
@@ -503,23 +524,32 @@ final class TickView: NSView {
 
 // MARK: - Notepad: the day's scratch note
 
-/// Saves as you type, one plain-text file a day. ⌘↩ turns the line you're on into a task.
+/// Saves as you type, one plain-text file a day. ⌘↩ turns the line you're on into a task. Its Clips tab has what
+/// you've copied and the screenshots you've taken.
 final class NoteCard: FlippedView, NSTextViewDelegate {
     let text = NoteTextView(usingTextLayoutManager: false)
     var onTask: (String) -> Void = { _ in }
     private unowned let planner: Planner
+    private unowned let clips: Clips
+    private let tabs = Tabs()
+    private var list: ClipsList!
+    private var showClips = false
+    private var noteViews: [NSView] = [], clipViews: [NSView] = []
+    private let clipHint = label("Click to copy, or drag out", 10.5, .medium, white(0.4))
     private let scroll = NSScrollView()
     private let date = label("", 11.5, .medium, white(0.45))
     private let placeholder = NSTextField(wrappingLabelWithString: "Jot things down.\n⌘↩ turns a line into a task.")
     private let words = label("", 10.5, .medium, white(0.4))
     private var day = "", saveWork: Task<Void, Never>?
 
-    init(frame: NSRect, planner: Planner) {
+    init(frame: NSRect, planner: Planner, clips: Clips) {
         self.planner = planner
+        self.clips = clips
         super.init(frame: frame)
         styleCard(self)
         let w = frame.width, h = frame.height
-        let title = label("Notepad", 14, .semibold); put(title, 14, 24, 100)
+        tabs.frame.origin = NSPoint(x: 12, y: 13)
+        tabs.onPick = { [unowned self] i in self.show(clips: i == 1) }
         put(date, w - 94, 24, 80, align: .right)
 
         scroll.frame = NSRect(x: 14, y: 42, width: w - 28, height: h - 42 - 38)
@@ -548,7 +578,33 @@ final class NoteCard: FlippedView, NSTextViewDelegate {
         placeholder.frame = NSRect(x: 14, y: 42, width: w - 28, height: 40)
         let hint = label("⌘↩ line → task", 10.5, .medium, white(0.4))
         put(words, 14, h - 16, 80); put(hint, w - 114, h - 16, 100, align: .right)
-        ([title, date, scroll, placeholder, dashedLine(14, h - 31, w - 28), words, hint] as [NSView]).forEach(addSubview)
+
+        list = ClipsList(frame: scroll.frame, clips: clips)
+        list.onCopied = { [unowned self] in
+            self.clipHint.stringValue = "Copied"
+            after(1.5) { [weak self] in self?.clipHint.stringValue = "Click to copy, or drag out" }
+        }
+        put(clipHint, 14, h - 16, w - 70)
+        let clear = IconButton("trash", size: 20, point: 10, label: "Clear Clips") { clips.clear() }
+        clear.image.contentTintColor = white(0.5)
+        clear.frame.origin = NSPoint(x: w - 34, y: h - 26)
+        noteViews = [date, scroll, placeholder, words, hint]
+        clipViews = [list, clipHint, clear]
+        ([tabs, dashedLine(14, h - 31, w - 28)] + noteViews + clipViews).forEach(addSubview)
+        show(clips: false)
+    }
+
+    func show(clips on: Bool) {
+        showClips = on
+        noteViews.forEach { $0.isHidden = on }
+        clipViews.forEach { $0.isHidden = !on }
+        placeholder.isHidden = on || !text.string.isEmpty
+        clipsChanged()
+    }
+
+    func clipsChanged() {
+        tabs.set([("Notepad", nil), ("Clips", clips.items.count)], selected: showClips ? 1 : 0)
+        if showClips { list.reload() }
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -560,6 +616,7 @@ final class NoteCard: FlippedView, NSTextViewDelegate {
         text.textStorage!.setAttributedString(NSAttributedString(string: planner.note(day), attributes: text.typingAttributes))
         date.stringValue = Date().formatted(.dateTime.day().month(.abbreviated))
         refresh()
+        clipsChanged()  // "2 min ago" moves on
     }
 
     /// Saves now if a save is waiting.
@@ -608,9 +665,9 @@ final class NoteTextView: NSTextView {
 
 // MARK: - Due alert
 
-/// What the collapsed island shows when a task comes due: the robot waving a bell, the task, Snooze and Done.
-/// `r` is the island's rect in window coordinates.
-func alertViews(_ t: Todo, in r: CGRect, snooze: @escaping () -> Void, done: @escaping () -> Void) -> [NSView] {
+/// What the collapsed island shows when something needs an answer: the robot waving, a badge saying what it's
+/// about, the title and detail, and its buttons. `r` is the island's rect in window coordinates.
+func alertViews(_ h: HeadsUp, in r: CGRect) -> [NSView] {
     let avatar = NSView(frame: NSRect(x: r.minX + 16, y: r.minY + 14, width: 52, height: 52))
     avatar.wantsLayer = true; avatar.layer!.cornerRadius = 14; avatar.layer!.backgroundColor = white(0.14).cgColor
     let robot = Robot()
@@ -622,19 +679,22 @@ func alertViews(_ t: Todo, in r: CGRect, snooze: @escaping () -> Void, done: @es
     let badge = NSView(frame: NSRect(x: avatar.frame.minX + 38, y: avatar.frame.minY - 5, width: 20, height: 20))  // over the corner
     badge.wantsLayer = true; badge.layer!.cornerRadius = 10; badge.layer!.backgroundColor = NSColor.systemOrange.cgColor
     badge.layer!.borderWidth = 2.5; badge.layer!.borderColor = NSColor.black.cgColor
-    let bell = NSImageView(image: sym("bell.fill", 8, .bold))
-    bell.contentTintColor = .black; bell.frame = badge.bounds
-    badge.addSubview(bell)
+    let icon = NSImageView(image: sym(h.badge, 8, .bold))
+    icon.contentTintColor = .black; icon.frame = badge.bounds
+    badge.addSubview(icon)
 
     let x = avatar.frame.maxX + 12, w = r.maxX - 16 - x
-    let title = label(t.title, 14.5, .semibold); put(title, x, r.minY + 58, w)
-    let when = label("Due \(dueText(t.due ?? Date()))", 12, .medium, white(0.5)); put(when, x, r.minY + 40, w)
-    let later = PillButton("5 min", symbol: "moon.zzz.fill", color: white(0.18), width: 66)
-    later.frame.origin = NSPoint(x: x, y: r.minY + 12)
-    later.toolTip = "Remind me again in 5 minutes"
-    later.action = snooze
-    let ok = PillButton("Done", symbol: "checkmark", color: .systemOrange, width: 62)
-    ok.frame.origin = NSPoint(x: x + 72, y: r.minY + 12)
-    ok.action = done
-    return [avatar, badge, title, when, later, ok]
+    let title = label(h.title, 14.5, .semibold); put(title, x, r.minY + 58, w)
+    title.lineBreakMode = .byTruncatingMiddle
+    let detail = label(h.detail, 12, .medium, white(0.5)); put(detail, x, r.minY + 40, w)
+    var views = [avatar, badge, title, detail], bx = x
+    for b in h.buttons {
+        let width = ceil(label(b.title, 11, .semibold, mono: true).fittingSize.width) + 34
+        let pill = PillButton(b.title, symbol: b.symbol, color: b.color, width: width)
+        pill.frame.origin = NSPoint(x: bx, y: r.minY + 12)
+        pill.action = b.action
+        views.append(pill)
+        bx += width + 6
+    }
+    return views
 }
