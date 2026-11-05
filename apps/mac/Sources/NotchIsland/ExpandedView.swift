@@ -39,6 +39,7 @@ final class ExpandedView: FlippedView {
     let focusPill = PillButton("25:00", symbol: "timer", color: .systemOrange, width: 74)
     let timerPill = PillButton("0:00", symbol: "timer", color: .systemTeal, width: 74)
     private var more: IconButton!
+    private var agentsPill: PillButton?
     private var play: IconButton!
     private var swipe: CGFloat = 0, swiped = false
     private var shownArt: NSImage?, shownPlaying: Bool?
@@ -241,6 +242,51 @@ final class ExpandedView: FlippedView {
             timerPill.toolTip = "\(t.label): click to stop"
             timerPill.frame.origin.x = focus.running ? focusPill.frame.minX - 8 - timerPill.frame.width : focusPill.frame.minX
         }
+        layoutAgentsPill()
+    }
+
+    /// Coding agents at work, as a pill beside the battery. Click it to see them, and to stop showing one that's over
+    /// (say, a session whose end Claude Code never reported).
+    func showAgents() {
+        agentsPill?.removeFromSuperview()
+        agentsPill = nil
+        let sessions = c.hub.agents.sessions
+        guard let first = sessions.values.first else { return }
+        let title = sessions.count == 1 ? first.project : "\(sessions.count) agents"
+        let width = min(ceil(label(title, 11, .semibold, mono: true).fittingSize.width) + 34, 140)
+        let pill = PillButton(title, symbol: "sparkle", color: sessions.values.contains { $0.waiting } ? .systemOrange : white(0.16), width: width)
+        pill.frame.origin.y = 6
+        pill.toolTip = "Coding agents: click to see them"
+        pill.action = { [unowned self, unowned pill] in
+            _ = self.agentsMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: -4), in: pill)
+        }
+        addSubview(pill)
+        agentsPill = pill
+        layoutAgentsPill()
+    }
+
+    /// Just left of whatever else is on the right: the timer, the focus countdown or the network speed.
+    private func layoutAgentsPill() {
+        guard let pill = agentsPill else { return }
+        let others = [timerPill, focusPill].filter { !$0.isHidden }.map(\.frame.minX)
+            + (net.isHidden ? [] : [net.frame.maxX - ceil(net.fittingSize.width)])
+        pill.frame.origin.x = (others.min() ?? batt.frame.minX) - 8 - pill.frame.width
+    }
+
+    private func agentsMenu() -> NSMenu {
+        let m = NSMenu(), agents = c.hub.agents
+        let head = NSMenuItem(title: "Click one to stop showing it", action: nil, keyEquivalent: "")
+        head.isEnabled = false
+        m.addItem(head)
+        for (sid, s) in agents.sessions.sorted(by: { $0.value.since < $1.value.since }) {
+            let what = s.waiting ? "waiting for you" : "working for \(durationText(Date().timeIntervalSince(s.since)))"
+            m.addItem(ActionItem("\(s.project), \(what)", symbol: "xmark.circle") { agents.forget(sid) })
+        }
+        if agents.sessions.count > 1 {
+            m.addItem(.separator())
+            m.addItem(ActionItem("Stop Showing All", symbol: "xmark.circle.fill") { agents.forgetAll() })
+        }
+        return m
     }
 
     /// Two-finger swipe across the player card: left for the next track, right for the previous.

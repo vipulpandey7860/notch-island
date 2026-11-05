@@ -146,6 +146,11 @@ if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLi
         controller.snapshot(dir.appendingPathComponent("21-agent-ask.png"))
         hub.alerting?.buttons[0].action()  // Allow
         try? await Task.sleep(for: .seconds(1))
+        controller.expand()
+        try? await Task.sleep(for: .seconds(1))
+        controller.snapshot(dir.appendingPathComponent("21b-agents-pill.png"))
+        controller.collapse()
+        try? await Task.sleep(for: .seconds(1))
         controller.note("checkmark.circle.fill", .systemGreen, "Claude finished", "notch-island · 4 min")
         try? await Task.sleep(for: .seconds(1))
         controller.snapshot(dir.appendingPathComponent("22-agent-done.png"))

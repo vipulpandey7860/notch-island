@@ -9,6 +9,7 @@ final class Agents {
         let project: String
         let since: Date
         var waiting = false
+        var pid: pid_t?  // the Claude Code process, so a closed terminal can be noticed
     }
     /// A Claude Code permission prompt, waiting for an answer from the notch.
     struct Request {
@@ -38,8 +39,8 @@ final class Agents {
     private let server = SocketServer()
 
     func start(path: String = Agents.socketPath) {
-        server.start(path: path) { [weak self] route, body, reply in
-            if let self { self.handle(route, body, reply) } else { reply(Data()) }
+        server.start(path: path) { [weak self] route, body, peer, reply in
+            if let self { self.handle(route, body, peer, reply) } else { reply(Data()) }
         }
     }
 
@@ -54,7 +55,42 @@ final class Agents {
         onChange()
     }
 
-    private func handle(_ route: String, _ body: Data, _ reply: @escaping (Data) -> Void) {
+    /// Stop showing a session: from the island's agents menu, or once it's over.
+    func forget(_ sid: String) {
+        guard sessions.removeValue(forKey: sid) != nil else { return }
+        for r in pending.values where r.session == sid {
+            answer(r.id, allow: nil)  // back to the terminal
+            onRequestGone(r.id)
+        }
+        onChange()
+    }
+
+    func forgetAll() { sessions.keys.forEach(forget) }
+
+    /// Call every few seconds: sessions whose Claude Code process has gone (a closed terminal, a crash) never send
+    /// Stop or SessionEnd, so they'd show as working for ever.
+    func prune() {
+        for (sid, s) in sessions {
+            if let pid = s.pid, kill(pid, 0) != 0, errno == ESRCH { forget(sid) }
+        }
+    }
+
+    /// The agent behind a hook call: the first of curl's parents that isn't a shell (curl ← sh ← claude), if it's an
+    /// agent. Anything else might be a wrapper that exits straight away, which would end a session still at work.
+    static func agentProcess(_ pid: pid_t, agents: Set<String> = ["claude", "node", "bun"]) -> pid_t? {
+        var p = pid
+        for _ in 0..<8 {
+            var info = proc_bsdinfo()
+            let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+            guard p > 1, proc_pidinfo(p, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+            let name = withUnsafeBytes(of: info.pbi_comm) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+            if !["curl", "sh", "bash", "zsh", "dash", "fish", "env"].contains(name) { return agents.contains(name) ? p : nil }
+            p = pid_t(info.pbi_ppid)
+        }
+        return nil
+    }
+
+    private func handle(_ route: String, _ body: Data, _ peer: pid_t, _ reply: @escaping (Data) -> Void) {
         let j = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
         if route == "/codex" {
             reply(Data())
@@ -64,10 +100,11 @@ final class Agents {
             return
         }
         let sid = j["session_id"] as? String ?? "", name = Self.project(j["cwd"] as? String ?? "")
-        switch j["hook_event_name"] as? String {
+        let event = j["hook_event_name"] as? String ?? ""
+        switch event {
         case "UserPromptSubmit":
             reply(Data())  // anything printed here would be added to Claude's context
-            sessions[sid] = Session(project: name, since: Date())
+            sessions[sid] = Session(project: name, since: Date(), pid: Self.agentProcess(peer))
             onChange()
         case "PermissionRequest":
             let tool = j["tool_name"] as? String ?? "a tool", input = j["tool_input"] as? [String: Any] ?? [:]
@@ -76,7 +113,7 @@ final class Agents {
             let (summary, complete) = Self.summary(tool, input, cwd: j["cwd"] as? String ?? "")
             let r = Request(id: id, session: sid, project: name, tool: tool, summary: summary, complete: complete, answer: reply)
             pending[id] = r
-            if sessions[sid] == nil { sessions[sid] = Session(project: name, since: Date()) }
+            if sessions[sid] == nil { sessions[sid] = Session(project: name, since: Date(), pid: Self.agentProcess(peer)) }
             sessions[sid]?.waiting = true
             onChange()
             onRequest(r)
@@ -87,20 +124,20 @@ final class Agents {
             }
         case "Notification":
             reply(Data())
-            if j["notification_type"] as? String == "idle_prompt" { onNote("Claude is waiting for you", name, false) }
-        case "Stop":
+            // Done and waiting for your next prompt; also how an interrupted turn (which sends no Stop) ends up
+            if j["notification_type"] as? String == "idle_prompt" {
+                forget(sid)
+                onNote("Claude is waiting for you", name, false)
+            }
+        case "Stop", "StopFailure":  // StopFailure: the turn ended on an API error, like a rate limit
             reply(Data())
-            let took = sessions.removeValue(forKey: sid).map { Date().timeIntervalSince($0.since) }
-            onChange()
-            if took ?? 0 >= Self.worthMentioning { onNote("Claude finished", "\(name) · \(durationText(took!))", true) }
+            let took = sessions[sid].map { Date().timeIntervalSince($0.since) }
+            forget(sid)
+            if event == "StopFailure" { onNote("Claude stopped", "\(name) · \(j["error"] as? String ?? "an error")", false) }
+            else if took ?? 0 >= Self.worthMentioning { onNote("Claude finished", "\(name) · \(durationText(took!))", true) }
         case "SessionEnd":
             reply(Data())
-            sessions.removeValue(forKey: sid)
-            for r in pending.values where r.session == sid {
-                answer(r.id, allow: nil)
-                onRequestGone(r.id)
-            }
-            onChange()
+            forget(sid)
         default:
             reply(Data())
         }
@@ -175,7 +212,8 @@ final class Agents {
 final class SocketServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "notch-island.agents", attributes: .concurrent)
 
-    func start(path: String, handle: @escaping (String, Data, @escaping (Data) -> Void) -> Void) {
+    /// `handle` gets the path, the body, the caller's process id, and the reply to send.
+    func start(path: String, handle: @escaping (String, Data, pid_t, @escaping (Data) -> Void) -> Void) {
         unlink(path)  // left over from the last run
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         var addr = sockaddr_un()
@@ -196,7 +234,9 @@ final class SocketServer: @unchecked Sendable {
         }
     }
 
-    private func serve(_ c: Int32, _ handle: @escaping (String, Data, @escaping (Data) -> Void) -> Void) {
+    private func serve(_ c: Int32, _ handle: @escaping (String, Data, pid_t, @escaping (Data) -> Void) -> Void) {
+        var peer: pid_t = 0, size = socklen_t(MemoryLayout<pid_t>.size)
+        getsockopt(c, SOL_LOCAL, LOCAL_PEERPID, &peer, &size)
         var buf = Data(), chunk = [UInt8](repeating: 0, count: 16384)
         let sep = Data("\r\n\r\n".utf8), limit = 1 << 20
         func more() -> Bool {
@@ -214,7 +254,7 @@ final class SocketServer: @unchecked Sendable {
         let body = buf.subdata(in: end.upperBound..<end.upperBound + length)
         DispatchQueue.main.async {
             var replied = false
-            handle(path, body) { reply in
+            handle(path, body, peer) { reply in
                 guard !replied else { return }
                 replied = true
                 self.queue.async {
@@ -252,7 +292,18 @@ enum AgentHooks {
 
     /// The events Notch Island listens to, and how long each hook may take: a permission prompt waits for you.
     static let claudeEvents: [(String, Int)] = [("UserPromptSubmit", 5), ("PermissionRequest", 120), ("Notification", 5),
-                                                ("Stop", 5), ("SessionEnd", 5)]
+                                                ("Stop", 5), ("StopFailure", 5), ("SessionEnd", 5)]
+
+    /// Connected, but from an older version that listened to fewer events (or ran a different command).
+    static var claudeOutdated: Bool {
+        guard claudeConnected, let data = try? Data(contentsOf: claudeFile),
+              let hooks = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["hooks"] as? [String: Any] else { return false }
+        return claudeEvents.contains { event, timeout in
+            !(hooks[event] as? [[String: Any]] ?? []).contains { group in
+                (group["hooks"] as? [[String: Any]] ?? []).contains { $0["command"] as? String == claudeCommand(timeout: timeout) }
+            }
+        }
+    }
 
     static func claudeCommand(timeout: Int) -> String {
         "curl -s -m \(timeout) -H 'Expect:' --unix-socket \"$HOME/Library/Application Support/\(marker)\" --data-binary @- http://localhost/claude || true"
@@ -336,11 +387,32 @@ extension Agents {
         precondition((reply?["hookSpecificOutput"]?["decision"] as? [String: String])?["behavior"] == "allow", "answer sent: \(out)")
         precondition(curl(sock, route: "claude", body: #"{"session_id":"s2","cwd":"/x/y","hook_event_name":"UserPromptSubmit"}"#).isEmpty
                      && agents.sessions["s2"]?.project == "y", "a prompt starts a session and prints nothing")
+        precondition(agents.sessions["s2"]?.pid == nil, "this test isn't an agent, so there's no process to watch")
+        let shell = Process()  // sh ← this test: the walk skips the shell
+        shell.executableURL = URL(fileURLWithPath: "/bin/sh"); shell.arguments = ["-c", "sleep 1"]
+        try! shell.run()
+        precondition(agentProcess(shell.processIdentifier, agents: ["NotchIsland"]) == getpid(), "found behind the shell")
+        precondition(agentProcess(shell.processIdentifier) == nil, "not an agent")
+        shell.terminate()
+        _ = curl(sock, route: "claude", body: #"{"session_id":"s2","hook_event_name":"StopFailure","error":"rate_limit"}"#)
+        precondition(agents.sessions["s2"] == nil, "an API error ends the turn too")
+        let gone = Process()
+        gone.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+        try! gone.run(); gone.waitUntilExit()
+        agents.sessions["s3"] = Session(project: "z", since: Date(), pid: gone.processIdentifier)
+        agents.sessions["s4"] = Session(project: "z", since: Date(), pid: getpid())
+        agents.prune()
+        precondition(agents.sessions["s3"] == nil && agents.sessions["s4"] != nil, "a closed terminal's session goes, a live one stays")
+        agents.forget("s4")
+        precondition(agents.sessions["s4"] == nil && agents.sessions["s1"] != nil, "forgotten from the menu")
+        agents.forgetAll()
+        precondition(agents.sessions.isEmpty, "all forgotten")
 
         // Connecting keeps what's already there, and disconnecting takes out only ours
         let claude = dir.appendingPathComponent("settings.json")
         try! #"{"model":"opus","hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}]}}"#.write(to: claude, atomically: true, encoding: .utf8)
         try! AgentHooks.setClaude(true, file: claude)
+        precondition((try! String(contentsOf: claude, encoding: .utf8)).contains("StopFailure"), "listens for API errors")
         var j = try! JSONSerialization.jsonObject(with: Data(contentsOf: claude)) as! [String: Any]
         var hooks = j["hooks"] as! [String: [Any]]
         precondition(j["model"] as? String == "opus" && hooks["Stop"]?.count == 2 && hooks["PermissionRequest"]?.count == 1, "connect")

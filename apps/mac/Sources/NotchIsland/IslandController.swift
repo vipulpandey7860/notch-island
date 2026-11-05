@@ -136,6 +136,7 @@ final class IslandController {
     // MARK: Focus and settings
 
     func agentsChanged() {
+        expanded.showAgents()
         updateMascotMood()
         if resting(mode) { setMode(base, force: true) }  // a new session, or one now waiting for you
     }

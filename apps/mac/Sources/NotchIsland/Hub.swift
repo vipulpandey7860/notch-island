@@ -102,7 +102,10 @@ final class Hub: NSObject {
         clips.onScreenshot = { [unowned self] url in
             self.islands.forEach { $0.note("camera.viewfinder", .systemBlue, "Screenshot", "In Clips: open the island to drag it out") }
         }
-        if !CommandLine.arguments.contains("--snapshot") { agents.start(); clips.start() }
+        if !CommandLine.arguments.contains("--snapshot") {
+            agents.start(); clips.start()
+            if AgentHooks.claudeOutdated { try? AgentHooks.setClaude(true) }  // connected by an older version: add what's new
+        }
         registerHotKey()
 
         layoutIslands()
@@ -238,6 +241,7 @@ final class Hub: NSObject {
         focus.tick()
         timers.tick()
         clips.poll()
+        if n % 5 == 0 { agents.prune() }
         let p = readPower(), pluggedIn = p.plugged && !power.plugged, powerChanged = p != power
         power = p
         if n % 30 == 0 { meetings.refresh() }
